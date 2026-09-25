@@ -206,7 +206,7 @@ export const CATALOGO:Item[]=[
  {key:'CROSSREF_MAILTO',grupo:'motor',rotulo:'E-mail para a Crossref',tipo:'email',destino:'motor'},
  {key:'OPENALEX_MAILTO',grupo:'motor',rotulo:'E-mail para a OpenAlex',tipo:'email',destino:'motor'},
  {key:'OPENALEX_API_KEY',grupo:'motor',rotulo:'Chave da OpenAlex',tipo:'secret',destino:'motor'},
- {key:'SEMANTIC_SCHOLAR_API_KEY',grupo:'motor',rotulo:'Chave do Semantic Scholar',tipo:'secret',destino:'motor'},
+ {key:'SEMANTIC_SCHOLAR_API_KEY',grupo:'motor',rotulo:'Chave do Semantic Scholar',tipo:'secret',destino:'ambos',ajuda:'Cota própria (1 pedido/s) em vez da cota anônima compartilhada, que recusa pedidos quando está cheia.'},
  {key:'SPRINGER_API_KEY',grupo:'motor',rotulo:'Chave da Springer Nature',tipo:'secret',destino:'motor',reiniciar:true},
  {key:'CORE_API_KEY',grupo:'motor',rotulo:'Chave do CORE',tipo:'secret',destino:'motor',reiniciar:true},
  {key:'WILEY_TDM_TOKEN',grupo:'motor',rotulo:'Token TDM da Wiley',tipo:'secret',destino:'motor'},
@@ -1223,6 +1223,8 @@ por
 ```ts
   const resolved=await resolveArticle(doi,true,{unpaywallEmail:(await settingsValues()).UNPAYWALL_EMAIL}),
 ```
+
+- [ ] **Step 3b: Chave do Semantic Scholar** — `lib/article-resolver.ts` já tem `s2ApiKey()`, que lê só o ambiente. Acrescente `s2ApiKey?:string` a `opts` de `resolveArticle`, use `fetchS2Paper(doi,{apiKey:opts.s2ApiKey||s2ApiKey()})`, e passe `s2ApiKey:v.SEMANTIC_SCHOLAR_API_KEY` nos dois chamadores (Steps 1 e 3). Na ação `prefetch` da rota de busca, use `{apiKey:(await settingsValues()).SEMANTIC_SCHOLAR_API_KEY||s2ApiKey()}`.
 
 - [ ] **Step 4: Triagem por IA** — em `app/api/projects/[id]/route.ts`, acrescentar `import {settingsValues} from '@/lib/settings-store';` e trocar
 

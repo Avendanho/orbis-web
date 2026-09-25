@@ -1,5 +1,7 @@
 import {identity,owned,database,body,ok,fail,ApiError,requireRole} from '@/lib/server';
-import {resolveArticle} from '@/lib/article-resolver';
+import {resolveArticle,s2ApiKey} from '@/lib/article-resolver';
+import {prefetchS2} from '@/lib/sources/semantic-scholar';
+import {isCentralRecord} from '@/lib/record-kind';
 import {doisFrom} from '@/lib/sources/pubmed-search';
 import {searchBase,isBase,BASES} from '@/lib/sources/bibliographic-search';
 import {normalizeList} from '@/lib/domain';
@@ -20,6 +22,13 @@ if(b.action==='pubmed'||b.action==='database'){
  // Mesma fila da lista colada: a busca muda a origem, não o fluxo.
  for(let n=0;n<dois.length;n+=50)await db.batch(dois.slice(n,n+50).map(doi=>db.prepare('INSERT INTO search_items(project,doi,status,updated) VALUES(?,?,?,?) ON CONFLICT(project,doi) DO NOTHING').bind(id,doi,'waiting',at)));
  return ok({count:dois.length,total:achado.total,withoutDoi:achado.withoutDoi,term:termo,base});
+}
+// Uma chamada em lote ao Semantic Scholar antes das consultas individuais: sem
+// isso, cada DOI disputa a cota anônima compartilhada e recebe 429.
+if(b.action==='prefetch'){
+ const rows=await db.prepare("SELECT doi FROM search_items WHERE project=? AND (status!='done' OR COALESCE(json_array_length(json_extract(result,'$.pdfUrls')),0)=0)").bind(id).all<{doi:string}>();
+ const dois=(rows.results||[]).map(x=>x.doi).filter(d=>!isCentralRecord(d));
+ return ok({count:dois.length,cached:dois.length?await prefetchS2(dois,{apiKey:s2ApiKey()}):0});
 }
 if(b.action==='queue'){const dois=normalizeList(String(b.text||''));if(!dois.length||dois.length>500)throw new ApiError(400,'Informe de 1 a 500 DOIs válidos.');for(let n=0;n<dois.length;n+=50)await db.batch(dois.slice(n,n+50).map(doi=>db.prepare('INSERT INTO search_items(project,doi,status,updated) VALUES(?,?,?,?) ON CONFLICT(project,doi) DO NOTHING').bind(id,doi,'waiting',at)));return ok({count:dois.length});}
 const doi=String(b.doi||'');const item=await db.prepare('SELECT * FROM search_items WHERE project=? AND doi=?').bind(id,doi).first<any>();if(!item)throw new ApiError(404,'DOI não está no lote.');if(item.status==='done'&&!b.retry)return ok(JSON.parse(item.result));if(item.status==='running'&&Date.parse(item.updated)>Date.now()-180000)throw new ApiError(409,'Este DOI já está sendo consultado.');const lease=crypto.randomUUID();const claim=await db.prepare("UPDATE search_items SET status='running',lease=?,updated=? WHERE project=? AND doi=? AND (status!='running' OR updated<?)").bind(lease,at,id,doi,new Date(Date.now()-180000).toISOString()).run();if(!claim.meta.changes)throw new ApiError(409,'Consulta já iniciada.');

@@ -1,5 +1,5 @@
 export const MAX_DOIS = 500;
-export type Article = { doi:string; abstract?:string; title:string; authors:string; year:string; journal:string; pdf:string|null; pdfUrls?:string[]; source:string; partial:boolean; found:boolean; reasonCode?:string; reason?:string; reasonDetail?:string; freeUrl?:string; sourceIssues?:string[]; pageDoi?:string };
+export type Article = { doi:string; abstract?:string; title:string; authors:string; year:string; journal:string; pdf:string|null; pdfUrls?:string[]; source:string; partial:boolean; found:boolean; reasonCode?:string; reason?:string; reasonDetail?:string; freeUrl?:string; sourceIssues?:string[]; pageDoi?:string; recordKind?:string; manualUrl?:string };
 export type BatchItem = { doi:string; state:'waiting'|'searching'|'done'|'error'; article?:Article; error?:string };
 export function normalizeDoi(value:string) {
  let doi=value.trim().replace(/^doi:\s*/i,'').replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,'');
