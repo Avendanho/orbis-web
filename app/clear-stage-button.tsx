@@ -1,0 +1,5 @@
+'use client';
+import {useState} from 'react';
+import {Button} from '@/components/ui/button';
+import {AlertDialog,AlertDialogAction,AlertDialogCancel,AlertDialogContent,AlertDialogDescription,AlertDialogFooter,AlertDialogHeader,AlertDialogTitle} from '@/components/ui/alert-dialog';
+export default function ClearStageButton({stage,label,description,disabled,onClear}:any){const [open,setOpen]=useState(false);return <><Button variant="outline" disabled={disabled} onClick={()=>setOpen(true)}>{label}</Button><AlertDialog open={open} onOpenChange={setOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Confirmar limpeza</AlertDialogTitle><AlertDialogDescription>{description} Os dados apagados não poderão ser recuperados sem um backup anterior.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={async()=>{await onClear(stage);setOpen(false)}}>Limpar esta etapa</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>}
