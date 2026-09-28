@@ -247,9 +247,6 @@ def try_core(
     if os.environ.get("PAPER_FETCH_SKIP_CORE") == "1":
         return []
 
-    if not runtime.CORE_API_KEY:
-        return []
-
     # Fielded DOI query: an unfielded phrase ("10.x/...") makes CORE answer
     # HTTP 500 after ~6 s, which always blew the timeout below.
     params = urllib.parse.urlencode({
@@ -262,14 +259,11 @@ def try_core(
         + params
     )
 
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {runtime.CORE_API_KEY}",
-            "User-Agent": runtime.UA,
-            "Accept": "application/json",
-        },
-    )
+    # CORE v3 answers anonymous requests at a lower rate limit; the key only raises it.
+    headers = {"User-Agent": runtime.UA, "Accept": "application/json"}
+    if runtime.CORE_API_KEY:
+        headers["Authorization"] = f"Bearer {runtime.CORE_API_KEY}"
+    request = urllib.request.Request(url, headers=headers)
 
     try:
         runtime._rate_limit_gate()

@@ -490,6 +490,28 @@ def _pdf_title_contradicts(expected: dict, pdf_identity: dict) -> bool:
     return bool(stated_title) or len(text_sample.strip()) >= _MIN_TEXT_FOR_MISMATCH
 
 
+def _generic_title_other_journal(expected: dict, pdf_identity: dict) -> bool:
+    """True when a generic title ("Abstracts", "Editorial") leaves only the
+    record vouching for the file, and the file shows it is from elsewhere.
+
+    A title that short identifies nothing, so ``_pdf_title_contradicts`` stays
+    silent — and a DOI-exact record has been seen pointing at another
+    journal's abstract book under such a title. The anchor left is the
+    journal: its name in the opening text, or at least a matching year.
+    Silent when the PDF says too little (scans), as elsewhere.
+    """
+    title = (expected.get("title") or "").strip()
+    journal = (expected.get("journal") or "").strip()
+    if len(title) >= _MIN_DETECTED_TITLE_LEN or not journal:
+        return False
+    text_sample = pdf_identity.get("text_sample") or ""
+    if len(text_sample.strip()) < _MIN_TEXT_FOR_MISMATCH:
+        return False
+    if year_matches(expected.get("year"), pdf_identity.get("year")):
+        return False
+    return not _title_covered_by_text(journal, text_sample)
+
+
 # Words of the expected title that must appear in the PDF's opening text for
 # the file to be read as that article (tolerates wrapping and hyphenation).
 _TITLE_COVERAGE_MIN = 0.75
@@ -589,6 +611,14 @@ def validate_article_identity(
     # contradicts the expected one, and nothing else about the file
     # corroborates the record, the candidate is rejected.
     if expected_doi and record_doi_matched:
+        if _generic_title_other_journal(expected, pdf_identity):
+            return {
+                "identity_validated": False,
+                "validation_method": "doi_in_record",
+                "validation_score": 0.0,
+                "reason": "generic_title_other_journal",
+                **base,
+            }
         if _pdf_title_contradicts(expected, pdf_identity):
             return {
                 "identity_validated": False,

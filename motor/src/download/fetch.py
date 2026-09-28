@@ -166,10 +166,16 @@ SCIHUB_DEFAULT_MIRRORS = (
     "sci-hub.ru",
     "sci-hub.al",
     "sci-hub.mk",
-    "sci-hub.su",
     "sci-hub.ee",
-    "sci.bban.top",
+    "sci-hub.vg",
+    "sci-hub.in",
+    "sci-hub.ren",
+    "sci-hub.su",
     "sci-net.xyz",
+    # Behind DDoS-Guard / JS checks: only useful with the browser fallback.
+    "sci-hub.st",
+    "sci-hub.box",
+    "sci-hub.wf",
 )
 SCIHUB_DISCOVERY_URL = "https://www.sci-hub.pub/"
 
@@ -201,6 +207,9 @@ ANNAS_ARCHIVE_DEFAULT_MIRRORS = (
 
 LIBGEN_DEFAULT_MIRRORS = (
     "https://libgen.li",
+    "https://libgen.la",
+    "https://libgen.bz",
+    "https://libgen.vg",
 )
 LIBGEN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 LIBGEN_RATE_PER_SEC = 2.0
@@ -1088,6 +1097,32 @@ _PUBLISHER_DIRECT_TEMPLATES: dict[str, tuple[str, str]] = {
     "10.1371/": ("plos", "https://journals.plos.org/plosone/article/file?id={doi}&type=printable"),
     # Frontiers and PeerJ are fully open access (CC-BY).
     "10.3389/": ("frontiers", "https://www.frontiersin.org/articles/{doi}/pdf"),
+    # ACM Digital Library has been fully open access since January 2026.
+    "10.1145/": ("acm", "https://dl.acm.org/doi/pdf/{doi}"),
+    "10.1088/": ("iop", "https://iopscience.iop.org/article/{doi}/pdf"),
+    # Atypon-hosted societies share the /doi/pdf/{doi} route.
+    "10.1098/": ("royalsociety", "https://royalsocietypublishing.org/doi/pdf/{doi}"),
+    "10.1146/": ("annualreviews", "https://www.annualreviews.org/doi/pdf/{doi}"),
+    "10.1128/": ("asm", "https://journals.asm.org/doi/pdf/{doi}"),
+    "10.1161/": ("aha", "https://www.ahajournals.org/doi/pdf/{doi}"),
+    "10.1137/": ("siam", "https://epubs.siam.org/doi/pdf/{doi}"),
+    "10.1287/": ("informs", "https://pubsonline.informs.org/doi/pdf/{doi}"),
+    "10.1061/": ("asce", "https://ascelibrary.org/doi/pdf/{doi}"),
+    "10.1089/": ("liebert", "https://www.liebertpub.com/doi/pdf/{doi}"),
+    "10.1200/": ("asco", "https://ascopubs.org/doi/pdf/{doi}"),
+    "10.1152/": ("physiology", "https://journals.physiology.org/doi/pdf/{doi}"),
+    "10.1086/": ("uchicago", "https://www.journals.uchicago.edu/doi/pdf/{doi}"),
+    "10.1139/": ("cdnsciencepub", "https://cdnsciencepub.com/doi/pdf/{doi}"),
+    "10.1142/": ("worldscientific", "https://www.worldscientific.com/doi/pdf/{doi}"),
+    "10.2514/": ("aiaa", "https://arc.aiaa.org/doi/pdf/{doi}"),
+    "10.1148/": ("rsna", "https://pubs.rsna.org/doi/pdf/{doi}"),
+    "10.1164/": ("ats", "https://www.atsjournals.org/doi/pdf/{doi}"),
+    "10.2105/": ("aphapublications", "https://ajph.aphapublications.org/doi/pdf/{doi}"),
+    "10.1094/": ("apsnet", "https://apsjournals.apsnet.org/doi/pdf/{doi}"),
+    "10.1190/": ("seg", "https://library.seg.org/doi/pdf/{doi}"),
+    "10.1515/": ("degruyter", "https://www.degruyter.com/document/doi/{doi}/pdf"),
+    "10.1055/": ("thieme", "https://www.thieme-connect.de/products/ejournals/pdf/{doi}.pdf"),
+    "10.1108/": ("emerald", "https://www.emerald.com/insight/content/doi/{doi}/full/pdf"),
     # 10.1016/ (Elsevier / Cell Press) needs PII lookup — handled separately below.
     # 10.3390/ (MDPI) needs slug lookup — handled separately below; the
     # canonical www.mdpi.com PDF URL is gated by Akamai and 403s many
@@ -2421,7 +2456,7 @@ def fetch(
     # 7. CORE
     # -----------------------------------------------------------------------
     if _can_try("core"):
-        if CORE_API_KEY and os.environ.get("PAPER_FETCH_SKIP_CORE") != "1":
+        if os.environ.get("PAPER_FETCH_SKIP_CORE") != "1":
             if "core" not in sources_tried:
                 sources_tried.append("core")
             _progress("source_try", doi=doi, source="core")
@@ -2437,7 +2472,7 @@ def fetch(
             else:
                 _progress("source_miss", doi=doi, source="core")
         else:
-            _progress("source_skip", doi=doi, source="core", reason="CORE_API_KEY not set" if not CORE_API_KEY else "PAPER_FETCH_SKIP_CORE=1")
+            _progress("source_skip", doi=doi, source="core", reason="PAPER_FETCH_SKIP_CORE=1")
 
     # -----------------------------------------------------------------------
     # 8. Libgen (Library Genesis)
@@ -2486,7 +2521,7 @@ def fetch(
     # -----------------------------------------------------------------------
     els_key = os.environ.get("ELSEVIER_API_KEY", "").strip()
     # MDPI and PLOS are fully open access, so their direct routes need no institutional mode.
-    if (_is_institutional() or (els_key and doi.startswith("10.1016/")) or doi.startswith(("10.3390/", "10.1371/", "10.3389/", "10.7717/"))) and _can_try("publisher_direct"):
+    if (_is_institutional() or (els_key and doi.startswith("10.1016/")) or doi.startswith(("10.3390/", "10.1371/", "10.3389/", "10.7717/", "10.1145/", "10.1186/"))) and _can_try("publisher_direct"):
         _progress("source_try", doi=doi, source="publisher_direct")
         pub_candidates = _try_publisher_direct(doi, timeout=timeout)
         if pub_candidates:
@@ -3230,6 +3265,10 @@ EXPANDED_SOURCE_NAMES = {
     "ntrs": "NASA NTRS",
     "base": "BASE",
     "fatcat": "Internet Archive Scholar",
+    "doi_patterns": "Preprint servers / OA publishers (DOI-derived URL)",
+    "arxiv_title": "arXiv (title search)",
+    "google_scholar": "Google Scholar",
+    "cyberleninka": "CyberLeninka",
 }
 
 # BASE answers only registered IPs; once it refuses, stop asking this run.
@@ -3535,8 +3574,9 @@ def _fetch_from_expanded_sources(
         ("ntrs", lambda: try_ntrs(doi=doi, timeout=timeout)),
         ("base", lambda: try_base_search(doi=doi, timeout=timeout)),
         ("fatcat", lambda: try_fatcat(doi=doi, timeout=timeout)),
+        ("doi_patterns", lambda: try_doi_patterns(doi=doi, timeout=timeout)),
     ]
-    
+
     import concurrent.futures
     
     def run_resolver(name, resolver_func):
@@ -3598,8 +3638,11 @@ def _fetch_from_expanded_sources(
             ("ntrs", lambda: try_ntrs(title=title, timeout=timeout)),
             ("base", lambda: try_base_search(title=title, timeout=timeout)),
             ("fatcat", lambda: try_fatcat(title=title, timeout=timeout)),
+            ("arxiv_title", lambda: try_arxiv_title(title=title, timeout=timeout)),
+            ("google_scholar", lambda: try_google_scholar(title=title, timeout=timeout)),
+            ("cyberleninka", lambda: try_cyberleninka(title=title, timeout=timeout)),
         ]
-        
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(title_resolvers)) as executor:
             futures = [executor.submit(_inherit_budget(run_resolver), name, func) for name, func in title_resolvers]
             for fut in concurrent.futures.as_completed(futures):
@@ -4260,6 +4303,9 @@ from sources_crossref import (  # noqa: E402  (re-exportado: testes usam fetch.t
 )
 from sources_shadow import (  # noqa: E402  (re-exportado: testes usam fetch.try_*)
     try_annas_archive, try_libgen, try_scihub,
+)
+from sources_extra import (  # noqa: E402
+    try_arxiv_title, try_cyberleninka, try_doi_patterns, try_google_scholar,
 )
 from doi_input import (  # noqa: E402  (re-exportado: run_parallel usa fetch._load_dois_and_titles_from_file)
     _identifier_to_doi, _load_dois_and_titles_from_file, _read_text_any,
@@ -5026,6 +5072,32 @@ def _fetch_traced(*args, **kwargs) -> dict:
     return result
 
 
+# A recuperação por título troca o DOI pedido por outro. Só é legítima quando
+# acha o mesmo trabalho (preprint, versão aceita): título específico e quase
+# idêntico. Um título genérico ("Oral Abstracts", "Editorial") não identifica
+# nada — com ele, a busca devolveu um artigo de outra revista como sucesso.
+_RECOVERY_MIN_TITLE_WORDS = 4
+_RECOVERY_MIN_SIMILARITY = 0.9
+
+
+def _recovery_is_same_work(requested_title: str, recovery: dict) -> bool:
+    found_title = (recovery.get("meta") or {}).get("title") or recovery.get("title") or ""
+    if len(_identity.normalize_title_text(requested_title or "").split()) < _RECOVERY_MIN_TITLE_WORDS:
+        return False
+    return _identity.title_similarity(requested_title, found_title) >= _RECOVERY_MIN_SIMILARITY
+
+
+def _discard_wrong_recovery(recovery: dict) -> None:
+    path = recovery.get("file")
+    if not path:
+        return
+    for p in (Path(path), Path(str(path) + ".identity.json")):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def fetch(doi: str, out_dir: Path, *, dry_run: bool, overwrite: bool, timeout: int, sources: list[str] | None = None) -> dict:
     result = _fetch_traced(
         doi, out_dir, dry_run=dry_run, overwrite=overwrite, timeout=timeout, sources=sources
@@ -5044,6 +5116,12 @@ def fetch(doi: str, out_dir: Path, *, dry_run: bool, overwrite: bool, timeout: i
         return result
 
     recovery = fetch_title_direct(title, out_dir, timeout=min(timeout, 12), overwrite=overwrite, sources=sources)
+    if recovery.get("success") and not _recovery_is_same_work(title, recovery):
+        # Outro artigo com título parecido não é este artigo: descarta o arquivo
+        # para ele não ser tomado pelo PDF do DOI pedido.
+        _discard_wrong_recovery(recovery)
+        result.setdefault("recovery", {"rejected": "different_work", "found_doi": recovery.get("doi")})
+        return result
     if recovery.get("success"):
         recovery.setdefault("recovery", {})["from_doi"] = doi
         recovery["recovery"]["strategy"] = "canonical_title_repository_search"

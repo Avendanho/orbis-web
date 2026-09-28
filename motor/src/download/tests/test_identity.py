@@ -309,3 +309,46 @@ def test_dois_normais_continuam_intactos():
     for d in ("10.1002/aur.1227", "10.1016/j.psychres.2022.114586",
               "10.1007/s00253-005-0098-3"):
         assert d in idn.DOI_LIKE_RE.findall(d + " "), d
+
+
+# ---------------------------------------------------------------------------
+# Título genérico ("Abstracts", "Editorial"): o título não identifica nada, então
+# a confiança no registro precisa de outra âncora — o nome da revista no PDF.
+# Caso real: o registro do DOI 10.1111/j.1469-8749.2008.03237.x ("Abstracts",
+# Dev Med Child Neurol) apontava para o caderno de resumos de uma revista
+# italiana de história constitucional, e o arquivo era aceito.
+# ---------------------------------------------------------------------------
+_TEXTO_OUTRA_REVISTA = (
+    "377 giornale di storia costituzionale / journal of constitutional history 36 / II 2018, "
+    "pp. 377-388 issn 1593-0793 / isbn 978-88-6056-594-5 / © eum 2018 Abstracts Sabino Cassese, "
+    "L'officina di idee della Costituzione / The Constitution's Workshop of ideas. The essay "
+    "examines the drafting of the constitutional text and the role of the constituent assembly."
+)
+
+
+def test_generic_title_rejected_when_pdf_is_from_another_journal():
+    expected = {"doi": "10.1111/j.1469-8749.2008.03237.x", "title": "Abstracts",
+                "journal": "Developmental Medicine & Child Neurology", "year": "2009"}
+    pdf_identity = {"doi": None, "title": None, "year": 2018, "text_sample": _TEXTO_OUTRA_REVISTA}
+    result = idn.validate_article_identity(expected, pdf_identity=pdf_identity, record_doi_matched=True)
+    assert result["identity_validated"] is False
+    assert result["reason"] == "generic_title_other_journal"
+
+
+def test_generic_title_accepted_when_pdf_names_the_journal():
+    expected = {"doi": "10.1111/j.1469-8749.2008.03237.x", "title": "Abstracts",
+                "journal": "Developmental Medicine & Child Neurology", "year": "2009"}
+    texto = ("Developmental Medicine & Child Neurology 2009, 51 (Suppl. 2): 1-40 Abstracts "
+             "Oral presentations. Early motor assessment in infants born preterm and outcomes at "
+             "two years in a regional cohort of children with cerebral palsy and related disorders.")
+    pdf_identity = {"doi": None, "title": None, "text_sample": texto}
+    result = idn.validate_article_identity(expected, pdf_identity=pdf_identity, record_doi_matched=True)
+    assert result["identity_validated"] is True
+
+
+def test_generic_title_keeps_record_trust_when_pdf_says_too_little():
+    """PDF escaneado, sem camada de texto: não há evidência de erro."""
+    expected = {"doi": "10.1111/x.1", "title": "Editorial", "journal": "Some Journal"}
+    pdf_identity = {"doi": None, "title": None, "text_sample": ""}
+    result = idn.validate_article_identity(expected, pdf_identity=pdf_identity, record_doi_matched=True)
+    assert result["identity_validated"] is True

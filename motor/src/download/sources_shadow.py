@@ -262,22 +262,32 @@ def try_libgen(
     req_timeout = min(timeout, 5)
 
     # 1. Fast direct HTTP mirror resolution (instant and resilient)
-    search_urls = []
-    mirrors = runtime._libgen_mirrors()
-    for mirror in mirrors:
+    def _search_urls(mirror: str) -> list[str]:
+        urls = []
         if doi:
-            search_urls.append(f"{mirror}/index.php?req={urllib.parse.quote(doi)}&columns%5B%5D=d&res=25")
-            search_urls.append(f"{mirror}/index.php?req={urllib.parse.quote(doi)}&res=25")
+            urls.append(f"{mirror}/index.php?req={urllib.parse.quote(doi)}&columns%5B%5D=d&res=25")
+            urls.append(f"{mirror}/index.php?req={urllib.parse.quote(doi)}&res=25")
         if title and len(title) >= 6:
-            search_urls.append(f"{mirror}/index.php?req={urllib.parse.quote(title)}&columns%5B%5D=t&res=25")
+            urls.append(f"{mirror}/index.php?req={urllib.parse.quote(title)}&columns%5B%5D=t&res=25")
+        return urls
 
-    for search_url in search_urls:
+    # The mirrors are clones of one database: a clean miss on one is a miss on
+    # all, so the next mirror is only worth asking when this one is unreachable.
+    search_plan: list[tuple[str, str]] = []
+    for mirror in runtime._libgen_mirrors():
+        search_plan.extend((mirror, u) for u in _search_urls(mirror))
+
+    answered_mirror: str | None = None
+    for mirror, search_url in search_plan:
         if pdf_urls or runtime._deadline_exceeded():
+            break
+        if answered_mirror and mirror != answered_mirror:
             break
         try:
             req = urllib.request.Request(search_url, headers=headers)
             with urllib.request.urlopen(req, timeout=req_timeout, context=runtime._ssl_unverified_context) as resp:
                 html_text = resp.read().decode("utf-8", "replace")
+            answered_mirror = mirror
 
             if "edition.php?id=" not in html_text and "/ads.php?md5=" not in html_text:
                 continue
@@ -292,7 +302,7 @@ def try_libgen(
                 ed_url = f"{mirror}/{ed}"
                 try:
                     req_ed = urllib.request.Request(ed_url, headers=headers)
-                    with urllib.request.urlopen(req_ed, timeout=req_timeout) as resp_ed:
+                    with urllib.request.urlopen(req_ed, timeout=req_timeout, context=runtime._ssl_unverified_context) as resp_ed:
                         ed_html = resp_ed.read().decode("utf-8", "replace")
                     for m in re.findall(r'/ads\.php\?md5=([a-fA-F0-9]{32})', ed_html):
                         if m not in md5_list:
@@ -304,7 +314,7 @@ def try_libgen(
                 ads_url = f"{mirror}/ads.php?md5={md5}"
                 try:
                     req_ads = urllib.request.Request(ads_url, headers=headers)
-                    with urllib.request.urlopen(req_ads, timeout=req_timeout) as resp_ads:
+                    with urllib.request.urlopen(req_ads, timeout=req_timeout, context=runtime._ssl_unverified_context) as resp_ads:
                         ads_html = resp_ads.read().decode("utf-8", "replace")
 
                     get_match = re.search(r'href=["\'](get\.php\?md5=[a-fA-F0-9]+&key=[a-zA-Z0-9]+)["\']', ads_html)
