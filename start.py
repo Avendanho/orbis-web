@@ -27,6 +27,7 @@ import os
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -198,6 +199,29 @@ def _d1(extra: list[str], config: Path) -> subprocess.CompletedProcess:
     )
 
 
+# Erros que dizem que a mudança já está no banco, não que ela é inválida.
+_JA_APLICADO = ("duplicate column name", "already exists")
+
+
+def aplicar_por_partes(arquivo: Path, config: Path, erro_inteiro: str) -> None:
+    """Reaplica uma migração comando a comando, pulando o que já está no banco.
+
+    Aplicar a migração e registrá-la em `orbis_migrations` são dois passos; uma
+    interrupção entre eles (Ctrl+C, terminal fechado) deixa o banco alterado e
+    a migração sem registro, e a próxima partida esbarra em "duplicate column
+    name". Só se tolera esse tipo de erro; qualquer outro interrompe.
+    """
+    if not any(m in erro_inteiro for m in _JA_APLICADO):
+        raise RuntimeError(f"{arquivo.name}: {erro_inteiro[-800:]}")
+    comandos = [c.strip() for c in arquivo.read_text(encoding="utf-8").split("--> statement-breakpoint")]
+    for comando in filter(None, comandos):
+        r = _d1(["--command", comando], config)
+        saida = (r.stderr or r.stdout).strip()
+        if r.returncode != 0 and not any(m in saida for m in _JA_APLICADO):
+            raise RuntimeError(f"{arquivo.name}: {saida[-800:]}")
+    aviso(f"{arquivo.name} já estava aplicada em parte; registrada agora")
+
+
 def preparar_banco() -> bool:
     """Cria as tabelas do banco local e aplica as migrações novas de `drizzle/`.
 
@@ -235,7 +259,7 @@ def preparar_banco() -> bool:
         for f in novas:
             r = _d1(["--file", str(f)], config)
             if r.returncode != 0:
-                raise RuntimeError(f"{f.name}: " + (r.stderr or r.stdout).strip()[-800:])
+                aplicar_por_partes(f, config, (r.stderr or r.stdout).strip())
             consulta(f"INSERT INTO orbis_migrations VALUES('{f.name}', datetime('now'))")
     except Exception as exc:
         erro(f"não foi possível preparar o banco local: {exc}")
@@ -284,16 +308,41 @@ def esperar(url: str, segundos: int = 40) -> bool:
     return False
 
 
+def porta_ocupada(porta: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", porta)) == 0
+
+
+def _como_liberar_porta(porta: int) -> str:
+    if WINDOWS:
+        return f"netstat -ano | findstr :{porta}   e depois   taskkill /PID <número> /F"
+    return f"lsof -ti :{porta} | xargs -r kill"
+
+
 def subir_motor(python: Path) -> bool:
     titulo(f"Subindo o motor em http://127.0.0.1:{PORTA_MOTOR}")
+    saude = f"http://127.0.0.1:{PORTA_MOTOR}/saude"
+    # Um motor de uma execução anterior pode ter ficado no ar (terminal fechado
+    # à força). Subir outro por cima falha com "address already in use".
+    if porta_ocupada(PORTA_MOTOR):
+        if esperar(saude, 3):
+            aviso("já havia um motor no ar, de uma execução anterior; vou usar esse")
+            aviso(f"ele não encerra com o Ctrl+C daqui. Para reiniciá-lo: {_como_liberar_porta(PORTA_MOTOR)}")
+            return True
+        erro(f"a porta {PORTA_MOTOR} está ocupada por outro programa; o ORBIS segue sem o motor")
+        aviso(f"para liberá-la: {_como_liberar_porta(PORTA_MOTOR)}")
+        return False
     ambiente = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1"}
-    _popen(
+    p = _popen(
         [str(python), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(PORTA_MOTOR), "--log-level", "warning"],
         cwd=SERVICO, env=ambiente,
     )
-    if esperar(f"http://127.0.0.1:{PORTA_MOTOR}/saude"):
+    if esperar(saude) and p.poll() is None:
         ok("motor no ar")
         return True
+    processos.remove(p)
+    _parar(p)
     aviso("o motor não respondeu; o ORBIS segue sem ele")
     return False
 
@@ -331,6 +380,10 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, encerrar)
     signal.signal(signal.SIGTERM, encerrar)
+    # Fechar o terminal manda SIGHUP. Os serviços rodam em sessão própria e não
+    # o recebem: sem isto, ficariam órfãos segurando as portas.
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, encerrar)
 
     print("\n\033[1;36m═══ ORBIS — revisão sistemática ═══\033[0m")
 
