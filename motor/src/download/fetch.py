@@ -707,6 +707,10 @@ def _inherit_budget(fn):
     return run
 
 
+# Below this, a source is not started: none finishes a lookup and a download in less.
+MIN_SOURCE_SECONDS = 4
+
+
 def _bounded_timeout(timeout: float) -> int:
     """Clamp a per-request timeout to what is left of the item budget."""
     left = _time_left()
@@ -826,8 +830,33 @@ def _note_transient(url: str, error: str | None) -> None:
         http_retry.note_failure(url)
 
 
-def _download(url: str, dest: Path, *, timeout: int, _visited: set | None = None) -> str | None:
-    """Download a PDF with GoByPASS403 multi-module bypass and stealth fallback."""
+def _read_within(response, seconds: float) -> bytes:
+    """Read a body, giving up once ``seconds`` have passed in total.
+
+    urllib's timeout only bounds each wait between bytes: a server trickling
+    the file (Libgen at ~16 KB/s) keeps a single read going for minutes, far
+    past the article budget.
+    """
+    limit = time.monotonic() + seconds
+    chunks: list[bytes] = []
+    size = 0
+    while size <= MAX_PDF_SIZE:
+        if time.monotonic() > limit:
+            raise TimeoutError("transfer timed out")
+        chunk = response.read(1 << 16)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
+
+
+def _download(url: str, dest: Path, *, timeout: int, referer: str | None = None, _visited: set | None = None) -> str | None:
+    """Download a PDF with GoByPASS403 multi-module bypass and stealth fallback.
+
+    ``referer`` replaces the default (the URL's own host) for file hosts that
+    only serve requests coming from a given page, as Sci-Hub's does.
+    """
     if _deadline_exceeded():
         return "item_deadline"
     timeout = _bounded_timeout(timeout)
@@ -862,7 +891,7 @@ def _download(url: str, dest: Path, *, timeout: int, _visited: set | None = None
         return None
 
     # 1. Bounded HTTP transport with per-host concurrency (curl_cffi/Chrome TLS).
-    ok, err = bypass_download_pdf(url, dest, timeout=timeout)
+    ok, err = bypass_download_pdf(url, dest, timeout=timeout, headers={"Referer": referer} if referer else None)
     if ok:
         _progress("download_bypass403_ok", url=url)
         http_retry.note_success(url)
@@ -873,7 +902,7 @@ def _download(url: str, dest: Path, *, timeout: int, _visited: set | None = None
     #    plain hosts where the primary transport hit a transient error).
     _rate_limit_gate()
     parsed = urllib.parse.urlparse(url)
-    referer = f"{parsed.scheme}://{parsed.netloc}/"
+    referer = referer or f"{parsed.scheme}://{parsed.netloc}/"
 
     headers = {
         "User-Agent": DOWNLOAD_UA,
@@ -887,7 +916,7 @@ def _download(url: str, dest: Path, *, timeout: int, _visited: set | None = None
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = r.read(MAX_PDF_SIZE + 1)
+            data = _read_within(r, timeout)
             if not data.startswith(b"%PDF") and len(data) <= 2 * 1024 * 1024:
                 html_text = data.decode("utf-8", "replace")
                 for candidate in extract_pdf_links(html_text, r.geturl()):
@@ -1569,9 +1598,16 @@ def _annas_archive_mirrors() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# Libgen allows 15 downloads per IP every 300 s and answers the 16th with an
+# HTTP 500 page ("You have downloaded too much files"). Asking again inside
+# that window only burns time, so the source rests until it reopens.
+LIBGEN_RATE_WINDOW = 300
+_libgen_paused_until: float = 0.0
+
+
 def _is_libgen_enabled() -> bool:
-    """True unless operator opted out via PAPER_FETCH_NO_LIBGEN=1."""
-    return not os.environ.get("PAPER_FETCH_NO_LIBGEN")
+    """True unless operator opted out via PAPER_FETCH_NO_LIBGEN=1 or Libgen is resting."""
+    return not os.environ.get("PAPER_FETCH_NO_LIBGEN") and time.monotonic() >= _libgen_paused_until
 
 
 def _libgen_mirrors() -> list[str]:
@@ -1959,6 +1995,12 @@ def fetch(
         sources_allowed = set(s.strip().lower() for s in env_sources.split(",") if s.strip())
 
     def _can_try(src_name: str) -> bool:
+        # Every source step passes through here, so this is where the article
+        # budget is enforced: a source started with seconds left runs past it,
+        # and the ORBIS gives up on the whole article.
+        left = _time_left()
+        if left is not None and left < MIN_SOURCE_SECONDS:
+            return False
         if sources_allowed is None:
             return True
         return src_name.lower() in sources_allowed
@@ -2073,13 +2115,12 @@ def fetch(
             identity_rejections.append({"source": cand_src, "url": cand_url, **cached})
             # Fall through: dest no longer exists, so a fresh download is attempted below.
 
-        # Sci-Hub CDN (sci.bban.top) blocks automated access entirely; using
-        # the full timeout (25 s) × ~7 bypass403 sub-attempts = ~175 s wasted
-        # per DOI.  Cap scihub candidates at 9 s so that bypass403 still gets
-        # a fair chance on each sub-attempt without stalling a worker.
+        # Sci-Hub's file host (sci.bban.top) answers 403 to any request that
+        # does not come from a mirror page, so the mirror goes as Referer.
         _dl_timeout = 9 if cand_src == "scihub" else timeout
+        _referer = f"https://{cand_detail['mirror']}/" if cand_src == "scihub" and (cand_detail or {}).get("mirror") else None
         _attempt_started = time.monotonic()
-        dl_err = _download(cand_url, dest, timeout=_dl_timeout)
+        dl_err = _download(cand_url, dest, timeout=_dl_timeout, referer=_referer)
         _attempt_ms = (time.monotonic() - _attempt_started) * 1000
         if dl_err is None:
             verdict = _validate_downloaded_file(dest, expected=expected, record_doi_matched=record_doi_matched)
@@ -2492,6 +2533,11 @@ def fetch(
                     return res
                 if fatal:
                     return res
+                if any(e.get("url") == lg_url and e.get("reason") == "http_500" for e in download_errors):
+                    global _libgen_paused_until
+                    _libgen_paused_until = time.monotonic() + LIBGEN_RATE_WINDOW
+                    _progress("source_skip", doi=doi, source="libgen", reason="rate_limited", seconds=LIBGEN_RATE_WINDOW)
+                    break
         else:
             _progress("source_miss", doi=doi, source="libgen")
 
@@ -2605,6 +2651,49 @@ def fetch(
             _progress("source_miss", doi=doi, source="oa_button")
 
     # -----------------------------------------------------------------------
+    # 11b1. Sci-Hub — ahead of OSTI and Wayback, which are niche and slow
+    #        (tens of seconds each) and would otherwise spend its budget.
+    # -----------------------------------------------------------------------
+    if _is_scihub_enabled() and _can_try("scihub") and "scihub" not in sources_tried:
+        _progress("source_try", doi=doi, source="scihub")
+        sources_tried.append("scihub")
+        sh_hit = try_scihub(doi, timeout=timeout)
+        if sh_hit:
+            sh_url, sh_mirror = sh_hit
+            source_details["scihub"] = {"mirror": sh_mirror}
+            _progress("source_hit", doi=doi, source="scihub", pdf_url=sh_url, mirror=sh_mirror)
+            res, fatal = _try_candidate("scihub", sh_url, {"mirror": sh_mirror})
+            if res is not None:
+                # Successful download — reset consecutive failure counter.
+                global _scihub_consecutive_failures
+                _scihub_consecutive_failures = 0
+                return res
+            if fatal:
+                return res
+            # _try_candidate returned (None, False) — check if error was a
+            # network error and update the circuit-breaker counter.
+            last_sh_err = next(
+                (e.get("reason", "") for e in reversed(download_errors) if e.get("source") == "scihub"),
+                "",
+            )
+            if "network_error" in last_sh_err or "download_network_error" in last_sh_err:
+                global _scihub_circuit_open
+                _scihub_consecutive_failures += 1
+                if _scihub_consecutive_failures >= SCIHUB_CIRCUIT_BREAKER_THRESHOLD and not _scihub_circuit_open:
+                    _scihub_circuit_open = True
+                    print(
+                        f"\n⚡ [CIRCUIT BREAKER] Sci-Hub desativado após "
+                        f"{_scihub_consecutive_failures} falhas de rede consecutivas. "
+                        "Será reativado apenas ao reiniciar o processo.\n",
+                        flush=True,
+                    )
+        else:
+            _progress("source_miss", doi=doi, source="scihub")
+            # No PDF URL found (CAPTCHA / not in corpus) also counts as a
+            # failure for circuit-breaker purposes when every mirror returned
+            # an error (try_scihub returns None on network-level failures too).
+
+    # -----------------------------------------------------------------------
     # 11b2. OSTI (accepted manuscripts of US DOE-funded articles)
     # -----------------------------------------------------------------------
     if _can_try("osti") and not os.environ.get("PAPER_FETCH_NO_OSTI"):
@@ -2662,48 +2751,6 @@ def fetch(
                     return res
             if not hit:
                 _progress("source_miss", doi=doi, source="wayback")
-
-    # -----------------------------------------------------------------------
-    # 12. Sci-Hub fallback
-    # -----------------------------------------------------------------------
-    if _is_scihub_enabled() and _can_try("scihub") and "scihub" not in sources_tried:
-        _progress("source_try", doi=doi, source="scihub")
-        sources_tried.append("scihub")
-        sh_hit = try_scihub(doi, timeout=timeout)
-        if sh_hit:
-            sh_url, sh_mirror = sh_hit
-            source_details["scihub"] = {"mirror": sh_mirror}
-            _progress("source_hit", doi=doi, source="scihub", pdf_url=sh_url, mirror=sh_mirror)
-            res, fatal = _try_candidate("scihub", sh_url, {"mirror": sh_mirror})
-            if res is not None:
-                # Successful download — reset consecutive failure counter.
-                global _scihub_consecutive_failures
-                _scihub_consecutive_failures = 0
-                return res
-            if fatal:
-                return res
-            # _try_candidate returned (None, False) — check if error was a
-            # network error and update the circuit-breaker counter.
-            last_sh_err = next(
-                (e.get("reason", "") for e in reversed(download_errors) if e.get("source") == "scihub"),
-                "",
-            )
-            if "network_error" in last_sh_err or "download_network_error" in last_sh_err:
-                global _scihub_circuit_open
-                _scihub_consecutive_failures += 1
-                if _scihub_consecutive_failures >= SCIHUB_CIRCUIT_BREAKER_THRESHOLD and not _scihub_circuit_open:
-                    _scihub_circuit_open = True
-                    print(
-                        f"\n⚡ [CIRCUIT BREAKER] Sci-Hub desativado após "
-                        f"{_scihub_consecutive_failures} falhas de rede consecutivas. "
-                        "Será reativado apenas ao reiniciar o processo.\n",
-                        flush=True,
-                    )
-        else:
-            _progress("source_miss", doi=doi, source="scihub")
-            # No PDF URL found (CAPTCHA / not in corpus) also counts as a
-            # failure for circuit-breaker purposes when every mirror returned
-            # an error (try_scihub returns None on network-level failures too).
 
     # -----------------------------------------------------------------------
     # 13. Anna's Archive fallback

@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 
 import runtime
-from bypass403 import bypass_get
+from bypass403 import BypassResult, bypass_get
 
 def try_scihub(doi: str, *, timeout: int) -> tuple[str, str] | None:
     """Resolve a DOI to a PDF URL via concurrent Sci-Hub mirror probing."""
@@ -85,8 +85,14 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
     if runtime._deadline_exceeded():
         return None
     mirrors = runtime._annas_archive_mirrors()
-    req_timeout = min(runtime._bounded_timeout(timeout), 12)
     md5_list = []
+
+    # Up to ~16 sequential requests: each re-checks the article budget and
+    # gets only what is left of it, or the source alone outlasts the article.
+    def _page(url: str, accept: str) -> BypassResult:
+        if runtime._deadline_exceeded():
+            return BypassResult(False, 0, error="item_deadline", url=url)
+        return bypass_get(url, timeout=min(runtime._bounded_timeout(timeout), 12), headers={"Accept": accept})
 
     # --- Strategy 1: Direct /scidb/ Route (Fast Path) -------------------
     # This route often redirects directly to the /md5/{hash} detail page,
@@ -94,7 +100,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
     for mirror in mirrors:
         try:
             fast_url = f"{mirror}/scidb/{urllib.parse.quote(doi)}"
-            res = bypass_get(fast_url, timeout=req_timeout, headers={"Accept": "text/html"})
+            res = _page(fast_url, "text/html")
             
             html_bytes = None
             final_url = fast_url
@@ -130,7 +136,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
                     )
                     if scimag:
                         try:
-                            lol_res = bypass_get(scimag[0], timeout=req_timeout, headers={"Accept": "text/html"})
+                            lol_res = _page(scimag[0], "text/html")
                             if lol_res.success and lol_res.data:
                                 get_links = re.findall(r'href=["\'](https?://[^"\']*get\.php\?[^"\']*)["\']', lol_res.data.decode("utf-8", "ignore"), re.IGNORECASE)
                                 if get_links:
@@ -156,7 +162,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
         for mirror in mirrors:
             try:
                 api_url = f"{mirror}/api/search?q={urllib.parse.quote(doi)}&ext=pdf"
-                res = bypass_get(api_url, timeout=req_timeout, headers={"Accept": "application/json"})
+                res = _page(api_url, "application/json")
                 if res.success and res.data:
                     data = json.loads(res.data.decode("utf-8", "ignore"))
                     results = data if isinstance(data, list) else data.get("results", [])
@@ -174,7 +180,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
         for mirror in mirrors:
             try:
                 url = f"{mirror}/search?q={urllib.parse.quote(doi)}&ext=pdf"
-                res = bypass_get(url, timeout=req_timeout, headers={"Accept": "text/html,application/xhtml+xml"})
+                res = _page(url, "text/html,application/xhtml+xml")
                 if res.success and res.data:
                     html_text = res.data.decode("utf-8", "ignore")
                     matches = re.findall(r'(?:/md5/|/detail/)([a-f0-9]{32})', html_text, re.IGNORECASE)
@@ -192,7 +198,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
         for mirror in mirrors:
             try:
                 detail_url = f"{mirror}/md5/{md5}"
-                res = bypass_get(detail_url, timeout=req_timeout, headers={"Accept": "text/html"})
+                res = _page(detail_url, "text/html")
                 if not res.success or not res.data:
                     continue
                     
@@ -225,7 +231,7 @@ def try_annas_archive(doi: str, *, timeout: int, errors: list | None = None) -> 
                 if scimag:
                     # library.lol scimag requires a second fetch to get the GET link
                     try:
-                        lol_res = bypass_get(scimag[0], timeout=req_timeout, headers={"Accept": "text/html"})
+                        lol_res = _page(scimag[0], "text/html")
                         if lol_res.success and lol_res.data:
                             lol_html = lol_res.data.decode("utf-8", "ignore")
                             get_links = re.findall(r'href=["\'](https?://[^"\']*get\.php\?[^"\']*)["\']', lol_html, re.IGNORECASE)

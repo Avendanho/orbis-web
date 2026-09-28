@@ -195,3 +195,31 @@ def test_identidade_reprovada_nao_apaga_pdf_de_outro_artigo(tmp_path):
     r = chamar(tmp_path, fetch=f, doi="10.1/b", ident=IdentidadeFalsa(ok=False, motivo="doi_mismatch"))
     assert r["ok"] is False
     assert (tmp_path / "pdfs" / "proj-1" / a["arquivo"]).read_bytes() == _por_doi("10.1/a")
+
+
+class FetchComErro(FetchFalso):
+    def __init__(self, erro):
+        super().__init__(sucesso=False)
+        self.erro = erro
+
+    def fetch(self, doi, out_dir, *, dry_run, overwrite, timeout, sources=None):
+        return {"doi": doi, "success": False, "file": None, "sources_tried": ["scihub"], "error": self.erro}
+
+
+@pytest.mark.parametrize("erro,trecho", [
+    ({"code": "not_found", "message": "No open-access PDF found"}, "Nenhuma cópia gratuita"),
+    ({"code": "article_identity_not_confirmed", "message": "3 candidate PDF(s) were downloaded but rejected"}, "3 PDF(s)"),
+    ({"code": "download_http_403", "message": "Download failed from crossref: http_403"}, "bloqueia o download automático"),
+    ({"code": "download_http_500", "message": "Download failed from libgen: http_500"}, "HTTP 500"),
+    ({"code": "download_http_429", "message": "x"}, "HTTP 429"),
+    ({"code": "download_timeout", "message": "x"}, "não respondeu a tempo"),
+    ({"code": "download_item_deadline", "message": "x"}, "tempo reservado"),
+    ({"code": "resolve_network_error", "message": "x"}, "bases de metadados"),
+    ({"code": "download_algo_novo", "message": "Download failed from x: algo_novo"}, "algo_novo"),
+])
+def test_falha_vira_frase_legivel(tmp_path, erro, trecho):
+    r = chamar(tmp_path, fetch=FetchComErro(erro))
+    assert r["ok"] is False
+    assert trecho in r["erro"]
+    assert "{" not in r["erro"] and "'code'" not in r["erro"]
+    assert r["codigo"] == erro["code"]

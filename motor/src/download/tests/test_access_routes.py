@@ -59,6 +59,23 @@ class LandingPageExtractionTests(unittest.TestCase):
             ],
         )
 
+    def test_with_a_doi_site_wide_pdfs_are_not_taken_for_the_article(self):
+        html = (
+            '<meta name="citation_pdf_url" content="/article/33016">'
+            '<a href="/images/pdf/Media-Pack-2024.pdf">Media pack</a>'
+            '<a href="/images/pdf/JournalCatalog2026.pdf">Catalog</a>'
+            '<a href="/article/33016/fulltext.pdf">Full text</a>'
+            '<a href="/content/157436211795659982.pdf">By DOI</a>'
+        )
+        self.assertEqual(
+            extract_pdf_links(html, "https://www.eurekaselect.com/article/33016", doi="10.2174/157436211795659982"),
+            [
+                "https://www.eurekaselect.com/article/33016",
+                "https://www.eurekaselect.com/article/33016/fulltext.pdf",
+                "https://www.eurekaselect.com/content/157436211795659982.pdf",
+            ],
+        )
+
     def test_ignores_unsafe_and_unrelated_links(self):
         html = ('<a href="javascript:alert(1)">x</a><a href="/about">sobre</a>'
                 '<meta name="dc.identifier.uri" content="https://repo.univ.edu/item/1">')

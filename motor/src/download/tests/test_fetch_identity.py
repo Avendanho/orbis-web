@@ -58,7 +58,7 @@ def _make_pdf_bytes(text: str) -> bytes:
 def _fake_download_writer(pdf_bytes: bytes):
     """Build a drop-in replacement for fetch._download that writes fixed bytes."""
 
-    def _fake_download(url, dest, *, timeout):
+    def _fake_download(url, dest, *, timeout, referer=None):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(pdf_bytes)
         return None
@@ -120,7 +120,7 @@ def test_fetch_rejects_when_downloaded_pdf_belongs_to_a_different_doi(tmp_path, 
 def test_fetch_rejects_corrupted_pdf_before_identity_check(tmp_path, monkeypatch):
     doi = "10.1002/ajmg.a.63953"
 
-    def _fake_download(url, dest, *, timeout):
+    def _fake_download(url, dest, *, timeout, referer=None):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"%PDF-1.4 not actually a valid pdf body")
         return "corrupted_pdf_structure"

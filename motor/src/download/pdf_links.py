@@ -9,7 +9,7 @@ a paywall or a challenge — it only reads what the page already carries.
 import json
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urldefrag
+from urllib.parse import unquote, urljoin, urlsplit, urldefrag
 
 # Link priority: the lower the rank, the more explicit the page was about
 # this URL being the article's full text.
@@ -72,8 +72,23 @@ def _jsonld_urls(payload) -> list[str]:
     return found
 
 
-def extract_pdf_links(html_text: str, page_url: str) -> list[str]:
-    """Candidate full-text URLs on a landing page, most explicit first."""
+def _article_tokens(doi: str, page_url: str) -> set[str]:
+    """Strings that a link to this article's own file is expected to carry."""
+    tokens = {doi.split("/", 1)[-1].lower()}
+    last = [p for p in urlsplit(page_url).path.split("/") if p]
+    if last:
+        tokens.add(unquote(last[-1]).lower())
+    return {t for t in tokens if len(t) >= 4}
+
+
+def extract_pdf_links(html_text: str, page_url: str, *, doi: str | None = None) -> list[str]:
+    """Candidate full-text URLs on a landing page, most explicit first.
+
+    With ``doi``, a plain anchor is kept only when its URL names the article
+    (the DOI suffix or the landing page's own id): publisher pages link
+    site-wide PDFs — catalogs, media kits, author guides — that would
+    otherwise be downloaded one by one as if they were the article.
+    """
 
     class Parser(HTMLParser):
         def __init__(self):
@@ -145,9 +160,13 @@ def extract_pdf_links(html_text: str, page_url: str) -> list[str]:
     parser = Parser()
     parser.feed(html_text)
 
+    tokens = _article_tokens(doi, page_url) if doi else set()
     result: list[str] = []
-    for _rank, value in sorted(parser.links, key=lambda item: item[0]):
+    for rank, value in sorted(parser.links, key=lambda item: item[0]):
         url = urldefrag(urljoin(parser.base, value))[0]
-        if urlsplit(url).scheme in {"http", "https"} and url not in result:
-            result.append(url)
+        if urlsplit(url).scheme not in {"http", "https"} or url in result:
+            continue
+        if tokens and rank >= _RANK_ANCHOR and not any(t in unquote(url).lower() for t in tokens):
+            continue
+        result.append(url)
     return result[:12]

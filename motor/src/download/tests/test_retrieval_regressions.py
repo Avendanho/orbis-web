@@ -14,7 +14,9 @@ class Response:
     def __init__(self, body, url): self.body, self.url = body, url
     def __enter__(self): return self
     def __exit__(self, *args): pass
-    def read(self, *args): return self.body
+    def read(self, *args):
+        body, self.body = self.body, b''  # a real response is read once, then EOF
+        return body
     def geturl(self): return self.url
 
 class RetrievalTests(unittest.TestCase):

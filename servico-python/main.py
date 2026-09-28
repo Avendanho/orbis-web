@@ -44,6 +44,36 @@ PIPELINE = os.environ.get("ORBIS_PIPELINE", "").strip() or (str(_PADRAO) if _PAD
 if PIPELINE and Path(PIPELINE).is_dir():
     sys.path.insert(0, PIPELINE)
 
+def _ler_env(arquivo: Path) -> dict[str, str]:
+    valores: dict[str, str] = {}
+    try:
+        linhas = arquivo.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return valores
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, valor = linha.removeprefix("export ").split("=", 1)
+        valores[chave.strip()] = valor.strip().strip("'\"")
+    return valores
+
+
+def carregar_env_do_motor(raiz: Path) -> None:
+    """Leva as chaves de ``motor/.env`` ao ambiente, como a documentação promete.
+
+    O ambiente do terminal prevalece. Um valor igual ao do ``.env.example`` é
+    o texto do modelo ("sua_chave_…"), não uma chave: mandá-lo às APIs só
+    rende recusas, então é ignorado.
+    """
+    modelo = _ler_env(raiz / ".env.example")
+    for chave, valor in _ler_env(raiz / ".env").items():
+        if valor and valor != modelo.get(chave) and chave not in os.environ:
+            os.environ[chave] = valor
+
+
+carregar_env_do_motor(Path(__file__).resolve().parent.parent / "motor")
+
 # Onde o modo "baixar" grava os PDFs. `ORBIS_DATA_DIR` é o mesmo diretório de
 # dados que o motor já usa (padrão: a pasta `motor/`).
 PASTA_PDFS = Path(os.environ.get("ORBIS_DATA_DIR") or Path(__file__).resolve().parent.parent / "motor") / "pdfs"

@@ -294,7 +294,7 @@ def try_doi_resolver(doi: str, *, timeout: int, errors: list | None = None) -> t
             # Likely a challenge page; skip PDF extraction as we won't get the real content.
             return None, {}
 
-    pdf_urls = extract_pdf_links(html, final_url)
+    pdf_urls = extract_pdf_links(html, final_url, doi=doi_norm)
     pdf_url = pdf_urls[0] if pdf_urls else None
 
     # Extract some metadata from the HTML title for filename generation

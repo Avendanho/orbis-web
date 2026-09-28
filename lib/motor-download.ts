@@ -25,6 +25,13 @@ export function motorSummary(res:EngineDownload,modo:DownloadMode,texto:{key:str
   texto:texto?{key:texto.key,bytes:texto.bytes,chars:Number(res.chars)||0,paginas:Number(res.paginas)||0,truncado:!!res.texto_truncado}:null};
 }
 
+// Um DOI de dados (figshare, Zenodo…) não tem PDF de artigo: mandar ao motor
+// só gasta o prazo e devolve um erro de rede enganoso no lugar do motivo real.
+export function motorSkip(meta:any,modo:DownloadMode):MotorResult|null{
+ if(meta?.recordKind!=='dataset')return null;
+ return {ok:false,modo,erro:String(meta.reasonDetail||'O DOI aponta para um conjunto de dados, não para um artigo com PDF.'),fontes:[]};
+}
+
 export function motorArticle(doi:string,metadata:any,articleId:string,filename:string,at:string){
  const m:MotorResult=metadata.motor;
  return {id:articleId,doi,title:metadata.title||'',authors:metadata.authors||'',year:metadata.year||'',abstract:metadata.abstract||'',filename,

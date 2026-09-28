@@ -35,6 +35,38 @@ _MOTIVOS = {
 }
 
 
+_FALHAS = {
+    "not_found": "Nenhuma cópia gratuita foi encontrada nas fontes consultadas.",
+    "resolve_network_error": "As bases de metadados não responderam; a disponibilidade é desconhecida. Tente de novo mais tarde.",
+    "download_timeout": "A fonte que tem o PDF não respondeu a tempo. Tente de novo.",
+    "download_network_error": "A conexão com a fonte que tem o PDF falhou. Tente de novo.",
+    "download_item_deadline": "O tempo reservado para este artigo acabou antes de alguma fonte entregar o PDF. Tente de novo.",
+    "download_host_cooldown": "A fonte que tem o PDF recusou pedidos há pouco e está em pausa. Tente de novo em alguns minutos.",
+    "download_not_a_pdf": "A fonte devolveu uma página em vez do PDF.",
+}
+
+
+def _motivo_falha(erro) -> tuple[str, str]:
+    """Frase para o pesquisador e código, a partir do erro estruturado do fetch."""
+    if not isinstance(erro, dict):
+        return str(erro or "Nenhuma fonte entregou o PDF."), ""
+    codigo = str(erro.get("code") or "")
+    if codigo in _FALHAS:
+        return _FALHAS[codigo], codigo
+    if codigo == "article_identity_not_confirmed":
+        n = re.match(r"\d+", str(erro.get("message") or ""))
+        return (f"{n.group(0) if n else 'Alguns'} PDF(s) encontrados não eram este artigo "
+                "(material suplementar ou outro documento) e foram descartados."), codigo
+    http = re.fullmatch(r"download_http_(\d{3})", codigo)
+    if http and http.group(1) in ("401", "403"):
+        return ("O site que tem o PDF bloqueia o download automático "
+                f"(HTTP {http.group(1)}). Abra a página do artigo e baixe manualmente."), codigo
+    if http:
+        return (f"A fonte que tem o PDF está limitando pedidos ou fora do ar (HTTP {http.group(1)}). "
+                "Tente de novo em alguns minutos."), codigo
+    return str(erro.get("message") or codigo or "Nenhuma fonte entregou o PDF."), codigo
+
+
 class PedidoInvalido(ValueError):
     """Entrada que nunca vai dar certo: o ORBIS deve mostrar e não repetir."""
 
@@ -107,7 +139,8 @@ def _executar(doi, esperado, prazo, pasta, fetch_mod, identity_mod, extrair, rel
     if caminho is None or not caminho.is_file():
         if relatorio:
             _registrar(relatorio, doi, "nao_localizado", None, None)
-        return {"ok": False, "erro": str(r.get("error") or "Nenhuma fonte entregou o PDF."), "fontes_tentadas": fontes}
+        motivo, codigo = _motivo_falha(r.get("error"))
+        return {"ok": False, "erro": motivo, **({"codigo": codigo} if codigo else {}), "fontes_tentadas": fontes}
 
     dados = caminho.read_bytes()
     identidade = _identidade(identity_mod.validate_article_identity(

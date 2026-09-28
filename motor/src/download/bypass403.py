@@ -393,8 +393,9 @@ class GoByPASS403Engine:
         dest: Path,
         *,
         timeout: int = 35,
+        headers: dict[str, str] | None = None,
     ) -> tuple[bool, str | None]:
-        res = self.execute_request(url, timeout=timeout, require_pdf=True)
+        res = self.execute_request(url, timeout=timeout, custom_headers=headers, require_pdf=True)
         if not res.success or not res.data:
             return False, res.error or "download_failed"
 
@@ -419,5 +420,5 @@ def bypass_get(url: str, *, timeout: int = 15, headers: dict[str, str] | None = 
     return default_engine.execute_request(url, timeout=timeout, custom_headers=headers, require_pdf=False)
 
 
-def bypass_download_pdf(url: str, dest: Path, *, timeout: int = 20) -> tuple[bool, str | None]:
-    return default_engine.download_pdf(url, dest, timeout=timeout)
+def bypass_download_pdf(url: str, dest: Path, *, timeout: int = 20, headers: dict[str, str] | None = None) -> tuple[bool, str | None]:
+    return default_engine.download_pdf(url, dest, timeout=timeout, headers=headers)
