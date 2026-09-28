@@ -65,7 +65,7 @@ assert.equal((await req(restored,'PATCH',{revision:aiSaved.revision,action:'remo
 assert.equal((await req(restored,'PATCH',{revision:aiSaved.revision,action:'removeAI',selector:{scope:'article',article:'article',analysis:aiSaved.state.articles[0].aiAnalyses[0].id}})).status,200);
 saved=(await req(restored)).data;assert.equal(saved.state.articles[0].aiAnalyses.length,0);assert.equal(saved.state.articles[0].finalReview.decision,'incluir');assert.equal(saved.documents.length,1);
 // Protocol planner must persist each phase and only apply approved PCC before triage.
-const plannerCode=stripTypeScriptTypes(readFileSync('lib/protocol-planner.ts','utf8')).replace("'./ai-analysis'",JSON.stringify(aiUrl));
+const docTypeUrl='data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(readFileSync('lib/document-type.ts','utf8'))).toString('base64');const plannerCode=stripTypeScriptTypes(readFileSync('lib/protocol-planner.ts','utf8')).replace("'./ai-analysis'",JSON.stringify(aiUrl)).replace("'./document-type'",JSON.stringify(docTypeUrl));
 const plannerLib=await import('data:text/javascript;base64,'+Buffer.from(plannerCode).toString('base64'));
 const plannerCreated=await req('/api/projects','POST',{name:'Plano por etapas'}),plannerPath='/api/projects/'+plannerCreated.data.id;
 let plannerProject=(await req(plannerPath)).data,plan=plannerLib.newPlanner(plannerProject.state.protocol);

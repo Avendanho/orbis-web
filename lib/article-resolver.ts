@@ -1,5 +1,5 @@
 import { normalizeDoi, type Article } from './doi-batch';
-import { safeUrl, inspectPage, probeFreePdf, accessReason } from './article-discovery';
+import { safeUrl, inspectPage, probeFreePdf, accessReason, cleanAbstract } from './article-discovery';
 import { pmcOpenAccess, identifiersFor } from './sources/pmc';
 import { unpaywall } from './sources/unpaywall';
 import { fetchS2Paper } from './sources/semantic-scholar';
@@ -10,6 +10,11 @@ const cache=new Map<string,{expires:number;article:Article}>();
 // O antigo oa.fcgi foi desligado na migração do PMC de agosto/2026 e responde
 // 404 — esta função devolvia lista vazia em silêncio desde então. O bucket que
 // o NIH publica na AWS serve o mesmo acervo sem chave e sem desafio.
+function openAlexAbstract(index:unknown):string{
+ if(!index||typeof index!=='object')return '';
+ const words:string[]=[];for(const [word,positions] of Object.entries(index as Record<string,unknown>))if(Array.isArray(positions))for(const position of positions)if(Number.isInteger(position))words[Number(position)]=word;
+ return cleanAbstract(words.filter(Boolean).join(' '));
+}
 async function pmcOaPdfLinks(pmcid:string):Promise<string[]>{
  const achado=await pmcOpenAccess(pmcid);
  return achado.pdf?[achado.pdf]:[];
@@ -38,13 +43,13 @@ export async function resolveArticle(input:string,refresh=false):Promise<Article
  // Unpaywall é a fonte de maior rendimento medido e não estava sendo consultada.
  // Exige e-mail de contato; sem ele, `unpaywall()` se omite sozinha.
  const up=await unpaywall(doi,(globalThis as any).UNPAYWALL_EMAIL||process.env?.UNPAYWALL_EMAIL||'');
- let cr=results[0].data?.message as Row|undefined;
+ let cr=results[0].data?.message as Row|undefined,dataciteAbstract='';
  // DataCite covers DOIs such as preprints that are absent from Crossref.
  let dcType='';
  if(!cr){
   const dc=await source('DataCite','https://api.datacite.org/dois/'+encodeURIComponent(doi));results.push(dc);
   const d=dc.data?.data?.attributes;dcType=String(d?.types?.resourceTypeGeneral||'');
-  if(d)cr={title:d.titles?.map((t:Row)=>t.title),author:d.creators?.map((a:Row)=>({given:a.givenName,family:a.familyName||a.name})),published:{'date-parts':[[d.publicationYear]]},URL:d.url,license:d.rightsList?.map((r:Row)=>({URL:r.rightsUri}))};
+  if(d){dataciteAbstract=(d.descriptions||[]).map((x:Row)=>cleanAbstract(x.description)).find(Boolean)||'';cr={title:d.titles?.map((t:Row)=>t.title),author:d.creators?.map((a:Row)=>({given:a.givenName,family:a.familyName||a.name})),published:{'date-parts':[[d.publicationYear]]},URL:d.url,license:d.rightsList?.map((r:Row)=>({URL:r.rightsUri}))};}
  }
  const ep=results[1].data?.resultList?.result?.find((r:Row)=>r.doi?.toLowerCase()===key) as Row|undefined;
  const ss=results[2].data;const oa=results[3].data;
@@ -75,9 +80,11 @@ export async function resolveArticle(input:string,refresh=false):Promise<Article
   try{const result=await inspectPage(page.url,doi);if(result.pageDoi&&!pageDoiVisto)pageDoiVisto=result.pageDoi;return {page,result};}catch(e){return {page,error:page.source+': '+(e instanceof Error&&e.name==='TimeoutError'?'página demorou a responder':e instanceof Error?e.message:'falha ao abrir página')};}
  }));
  const unverified:{url:string;source:string}[]=[];
+ let pageAbstract='',pageAbstractSource='';
  for(const discovery of discoveries){
   if(discovery.error){issues.push(discovery.error);continue;}
   const r=discovery.result!;if(r.mismatch){issues.push(discovery.page.source+': página retornou outro DOI');continue;}
+  if(!pageAbstract&&r.abstract){pageAbstract=cleanAbstract(r.abstract);pageAbstractSource=discovery.page.source;}
   if(r.free)knownOa=true;
   if(r.paid&&discovery.page.source==='Editora')paid=true;
   for(const url of r.pdfUrls){if((discovery.page.oa||r.free)&&!r.paid)addPdf(url,discovery.page.source);else unverified.push({url,source:discovery.page.source});}
@@ -95,7 +102,9 @@ export async function resolveArticle(input:string,refresh=false):Promise<Article
  const reason=escolherMotivo({pdf:!!pdf,kind,...gravidade,oa:knownOa,base});
  // Onde a pessoa baixa à mão quando o robô não consegue.
  const manualUrl=!pdf&&['publisher_blocked','oa_without_pdf'].includes(reason.reasonCode)?freePages[0]||publisherPage:undefined;
- const article:Article={doi,pageDoi:pageDoiVisto,abstract:(cr?.abstract||ep?.abstractText||'').replace(/<[^>]*>/g,''),title:cr?.title?.[0]?.replace(/<[^>]*>/g,'')||ep?.title||ss?.title||oa?.display_name||doi,authors:cr?.author?.slice(0,6).map((a:Row)=>[a.given,a.family].filter(Boolean).join(' ')).join(', ')||ep?.authorString||ss?.authors?.slice(0,6).map((a:Row)=>a.name).join(', ')||oa?.authorships?.slice(0,6).map((a:Row)=>a.author?.display_name).filter(Boolean).join(', ')||'',year:String(cr?.published?.['date-parts']?.[0]?.[0]||ep?.pubYear||ss?.year||oa?.publication_year||''),journal:cr?.['container-title']?.[0]||ep?.journalInfo?.journal?.title||ss?.venue||oa?.primary_location?.source?.display_name||'',pdf,pdfUrls:candidates.slice(0,12).map(c=>c.url),source:candidates[0]?.source||'',found:!!(cr||ep||ss||oa),partial:isPartial(gravidade),recordKind:kind?.kind,manualUrl,freeUrl:freePages[0]||(knownOa?pages[0]?.url:undefined),sourceIssues:issues,...reason};
+ const abstractOptions=[{text:cleanAbstract(cr?.abstract),source:'Crossref'},{text:cleanAbstract(ep?.abstractText),source:'Europe PMC'},{text:cleanAbstract(ss?.abstract),source:'Semantic Scholar'},{text:openAlexAbstract(oa?.abstract_inverted_index),source:'OpenAlex'},{text:dataciteAbstract,source:'DataCite'},{text:pageAbstract,source:pageAbstractSource}].filter(x=>x.text);
+ const chosenAbstract=abstractOptions.sort((a,b)=>b.text.length-a.text.length)[0];
+ const article:Article={doi,pageDoi:pageDoiVisto,abstract:chosenAbstract?.text||'',abstractSource:chosenAbstract?.source||'',abstractStatus:chosenAbstract?'found':'not_found',title:cr?.title?.[0]?.replace(/<[^>]*>/g,'')||ep?.title||ss?.title||oa?.display_name||doi,authors:cr?.author?.slice(0,6).map((a:Row)=>[a.given,a.family].filter(Boolean).join(' ')).join(', ')||ep?.authorString||ss?.authors?.slice(0,6).map((a:Row)=>a.name).join(', ')||oa?.authorships?.slice(0,6).map((a:Row)=>a.author?.display_name).filter(Boolean).join(', ')||'',year:String(cr?.published?.['date-parts']?.[0]?.[0]||ep?.pubYear||ss?.year||oa?.publication_year||''),journal:cr?.['container-title']?.[0]||ep?.journalInfo?.journal?.title||ss?.venue||oa?.primary_location?.source?.display_name||'',pdf,pdfUrls:candidates.slice(0,12).map(c=>c.url),source:candidates[0]?.source||'',found:!!(cr||ep||ss||oa),partial:isPartial(gravidade),recordKind:kind?.kind,manualUrl,freeUrl:freePages[0]||(knownOa?pages[0]?.url:undefined),sourceIssues:issues,...reason};
  if(cache.size>=500)cache.delete(cache.keys().next().value!);
  cache.set(key,{article,expires:Date.now()+(!issues.length?10*60*1000:30*1000)});
  return article;

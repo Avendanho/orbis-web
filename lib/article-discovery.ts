@@ -2,8 +2,14 @@ import {checkedFetch} from './remote';
 import { publicPdfUrl } from './pdf-transfer';
 import { normalizeDoi } from './doi-batch';
 export function safeUrl(value:unknown,base?:string):string|null {if(typeof value!=='string')return null;try{return publicPdfUrl(new URL(value,base).href).href;}catch{return null;}}
-function entities(s:string){return s.replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n)));}
+function entities(s:string){return s.replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n)));}
 function attrs(tag:string){const a:Record<string,string>={};for(const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g))a[m[1].toLowerCase()]=entities(m[2]??m[3]??m[4]);return a;}
+export function cleanAbstract(value:unknown):string{
+ if(typeof value!=='string')return '';
+ const text=entities(value).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/^\s*(?:abstract|summary|resumo)\s*[:.\-–—]?\s*/i,'').replace(/\s+/g,' ').trim();
+ if(text.length<20||/^(?:abstract|summary|resumo)?\s*(?:not available|unavailable|não disponível|não informado)\.?$/i.test(text))return '';
+ return text.slice(0,50000);
+}
 export function parseArticlePage(html:string,url:string,doi:string){
  const metas=(html.match(/<meta\b[^>]*>/gi)||[]).map(attrs);
  const pageDois=metas.filter(m=>['citation_doi','dc.identifier','dc.identifier.doi','prism.doi'].includes((m.name||m.property||'').toLowerCase())).map(m=>normalizeDoi(m.content||'').toLowerCase()).filter(d=>d.startsWith('10.'));
@@ -15,17 +21,19 @@ export function parseArticlePage(html:string,url:string,doi:string){
   if(value&&typeof value==='object')return Object.values(value).some(hasDoi);
   return false;
  }
+ let structuredAbstract='';
  function walk(value:unknown){
   if(Array.isArray(value)){value.forEach(walk);return;}
   if(!value||typeof value!=='object')return;
   const obj=value as Record<string,unknown>;
   const types=Array.isArray(obj['@type'])?obj['@type']:[obj['@type']];
   const identity=matched||hasDoi(obj.identifier)||hasDoi(obj.sameAs);
-  if(identity&&types.some(t=>['ScholarlyArticle','Article','MedicalScholarlyArticle'].includes(String(t)))){if(obj.isAccessibleForFree===true||obj.isAccessibleForFree==='true')free=true;if(obj.isAccessibleForFree===false||obj.isAccessibleForFree==='false')paid=true;}
+  if(identity&&types.some(t=>['ScholarlyArticle','Article','MedicalScholarlyArticle'].includes(String(t)))){if(obj.isAccessibleForFree===true||obj.isAccessibleForFree==='true')free=true;if(obj.isAccessibleForFree===false||obj.isAccessibleForFree==='false')paid=true;structuredAbstract=structuredAbstract||cleanAbstract(obj.abstract)||cleanAbstract(obj.description);}
   if(obj['@graph'])walk(obj['@graph']);
  }
  for(const script of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{walk(JSON.parse(script[1]));}catch{}}
  const urls:string[]=[];
+ const metaAbstract=metas.map(m=>{const key=(m.name||m.property||'').toLowerCase();return ['citation_abstract','dc.description','dcterms.abstract','prism.teaser','og:description','description'].includes(key)?cleanAbstract(m.content):''}).find(Boolean)||'';
  if(!mismatch){
   for(const m of metas)if(['citation_pdf_url','wkhealth_pdf_url','eprints.document_url'].includes((m.name||m.property||'').toLowerCase())){const u=safeUrl(m.content,url);if(u)urls.push(u);}
   for(const tag of html.match(/<link\b[^>]*>/gi)||[]){const a=attrs(tag);if(a.type==='application/pdf'&&a.rel?.includes('alternate')){const u=safeUrl(a.href,url);if(u)urls.push(u);}}
@@ -33,7 +41,7 @@ export function parseArticlePage(html:string,url:string,doi:string){
  // `pageDoi` é o que a própria página declara. Já era calculado para decidir
  // `matched`/`mismatch`, mas era descartado; a validação de identidade
  // precisa do valor, não só do veredito.
- return {pdfUrls:[...new Set(urls)].slice(0,4),free:!mismatch&&free,paid:!mismatch&&paid,matched,mismatch,pageDoi:pageDois[0]||''};
+ return {pdfUrls:[...new Set(urls)].slice(0,4),free:!mismatch&&free,paid:!mismatch&&paid,matched,mismatch,pageDoi:pageDois[0]||'',abstract:mismatch?'':structuredAbstract||metaAbstract};
 }
 export async function inspectPage(url:string,doi:string){
  const signal=AbortSignal.timeout(18000);let target=publicPdfUrl(url);
@@ -41,7 +49,7 @@ export async function inspectPage(url:string,doi:string){
   const r=await checkedFetch(target,{redirect:'manual',signal,headers:{Accept:'text/html,application/pdf;q=0.9'}});
   if([301,302,303,307,308].includes(r.status)){const loc=r.headers.get('location');await r.body?.cancel();if(!loc)throw new Error('redirecionamento sem destino');target=publicPdfUrl(new URL(loc,target).href);continue;}
   if(!r.ok){await r.body?.cancel();throw new Error(r.status===403?'bloqueio de acesso automático':r.status===429?'limite de consultas':'HTTP '+r.status);}
-  if(r.headers.get('content-type')?.includes('application/pdf')){await r.body?.cancel();return {pdfUrls:[target.href],free:true,paid:false,matched:true,mismatch:false,pageDoi:'',url:target.href};}
+  if(r.headers.get('content-type')?.includes('application/pdf')){await r.body?.cancel();return {pdfUrls:[target.href],free:true,paid:false,matched:true,mismatch:false,pageDoi:'',abstract:'',url:target.href};}
   const reader=r.body?.getReader();if(!reader)throw new Error('página vazia');let size=0;const chunks:Uint8Array[]=[];
   try {while(size<1024*1024){const {done,value}=await reader.read();if(done)break;const chunk=value.subarray(0,1024*1024-size);chunks.push(chunk);size+=chunk.length;}}finally{await reader.cancel().catch(()=>{});}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}

@@ -9,7 +9,7 @@
 //  - chave (SEMANTIC_SCHOLAR_API_KEY): cota própria de 1 pedido/s.
 // A fonte continua valendo a pena: é ela que às vezes aponta o preprint.
 const API='https://api.semanticscholar.org/graph/v1/paper/';
-const FIELDS='title,authors,year,venue,openAccessPdf,isOpenAccess';
+const FIELDS='title,abstract,authors,year,venue,openAccessPdf,isOpenAccess';
 const TETO_ESPERA=10000,LOTE=500,VALIDADE=60*60*1000;
 // Consulta individual: 3 tentativas, esperas a partir de 0,5 s. Lote: vale por
 // até 500 consultas, então insiste mais — 5 tentativas, esperas a partir de 2 s.

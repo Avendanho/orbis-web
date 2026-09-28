@@ -3,6 +3,7 @@ import {resolveArticle} from './article-resolver';
 import {retrievePdf} from './pdf-transfer';
 import {checkIdentity} from './identity';
 import {motorArticle} from './motor-download';
+import {extractPdfDetails} from './pdf-abstract';
 const QUOTA=2*1024*1024*1024;
 export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string){
  const db=database(),row=await db.prepare("SELECT result FROM search_items WHERE project=? AND doi=? AND status IN ('done','partial')").bind(p.id,doi).first<any>();
@@ -30,7 +31,9 @@ export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string
   const veredito=checkIdentity(
    {doi,title:metadata.title||resolved.title,year:String(metadata.year||resolved.year||'')},
    {pageDoi:metadata.pageDoi||resolved.pageDoi,pageTitle:metadata.pageTitle,pageYear:metadata.pageYear?String(metadata.pageYear):undefined});
-  state.articles.push({id:articleId,doi,title:metadata.title||resolved.title,authors:metadata.authors||resolved.authors,year:metadata.year||resolved.year,abstract:metadata.abstract||resolved.abstract||'',filename,identity:{ok:veredito.ok,method:veredito.method,score:veredito.score,detail:veredito.detail,checkedAt:new Date().toISOString()},source:{pdf:resolved.pdf,pdfUrls:urls,source:metadata.source,reason:'PDF validado e armazenado',reasonDetail:veredito.detail}});
+  let pdfDetails:any={title:'',abstract:'',documentType:null};try{pdfDetails=await extractPdfDetails(bytes)}catch{}
+  const abstract=pdfDetails.abstract||resolved.abstract||metadata.abstract||'',abstractSource=pdfDetails.abstract?'Extraído do PDF':resolved.abstract?resolved.abstractSource:metadata.abstractSource;
+  state.articles.push({id:articleId,doi,title:pdfDetails.title||metadata.title||resolved.title,titleSource:pdfDetails.title?'Extraído do PDF':metadata.title?'Base bibliográfica':'Metadados do DOI',titleConfirmed:!!pdfDetails.title,authors:metadata.authors||resolved.authors,year:metadata.year||resolved.year,abstract,abstractStatus:abstract?'found':'not_found',abstractSource:abstractSource||'',documentType:pdfDetails.documentType||null,filename,identity:{ok:veredito.ok,method:veredito.method,score:veredito.score,detail:veredito.detail,checkedAt:new Date().toISOString()},source:{pdf:resolved.pdf,pdfUrls:urls,source:metadata.source,reason:'PDF validado e armazenado',reasonDetail:veredito.detail}});
   await db.prepare("UPDATE documents SET status='ready' WHERE id=? AND project=?").bind(docId,p.id).run();
   const result=await commit(p,actor,state,'incorporate');committed=true;reserved=0;
   await db.prepare('INSERT INTO pdf_attempts(id,project,article,status,reason,created) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),p.id,articleId,'saved','PDF validado e armazenado antes da incorporação',new Date().toISOString()).run().catch(()=>{});
