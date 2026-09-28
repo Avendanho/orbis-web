@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Python services and local tool state: thousands of files, no JS to lint.
+    "motor/**",
+    "servico-python/**",
+    ".wrangler/**",
+    ".vinext/**",
+    "dist/**",
   ]),
   {
     files: ["components/ui/**/*.{ts,tsx}", "hooks/use-mobile.ts"],

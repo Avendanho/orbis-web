@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next (vinext) em Cloudflare Workers/workerd, D1, TypeScript sem build nos testes (`stripTypeScriptTypes`), Miniflare nos testes de integração; FastAPI + pytest no motor.
 
-**Spec:** `docs/superpowers/specs/2026-09-24-configuracoes-design.md`
+**Spec:** `docs/planos/configuracoes-design.md`
 
 ## Global Constraints
 

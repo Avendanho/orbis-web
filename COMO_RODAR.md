@@ -11,8 +11,10 @@ orbis-web/
  │   ├─ src/search/           busca em 11 bases
  │   ├─ src/download/         recuperação de PDFs e validação de identidade
  │   ├─ src/analysis/         extração de texto, triagem por IA, PRISMA
+ │   ├─ scripts/              utilitários avulsos
  │   └─ requirements.txt
- └─ servico-python/         expõe o motor para o ORBIS
+ ├─ servico-python/         expõe o motor para o ORBIS
+ └─ docs/                   hospedagem Sites e planos pendentes
 ```
 
 O motor **não tem interface própria**. Ele é um mecanismo; quem mostra as
@@ -75,8 +77,13 @@ O `start.py` carrega o nvm sozinho quando ele existe.
 
 ```bash
 corepack pnpm install
+cp .openai/hosting.example.json .openai/hosting.json
 python start.py --so-orbis   # cria as tabelas do banco local e sobe a interface
 ```
+
+O `.openai/hosting.json` declara os bindings do D1 e do R2 e, na versão
+hospedada, o identificador do projeto; por isso só o exemplo vai para o
+repositório.
 
 Rodar `corepack pnpm dev` direto também funciona, mas só depois que o banco
 local tiver as tabelas — sem elas a API responde "no such table: projects".
@@ -178,13 +185,13 @@ As chaves do motor vão em `motor/.env`. As do ORBIS, no ambiente do Worker.
 ## Testes
 
 ```bash
-# ORBIS — 9 suítes
+# ORBIS — 17 suítes
 for t in tests/*.mjs; do node "$t"; done
 
 # verificação de tipos
 pnpm exec tsc --noEmit
 
-# motor — 262 testes
+# motor — 277 testes
 cd motor && .venv/bin/python -m pytest -q
 ```
 
@@ -237,9 +244,6 @@ Sem elas, o projeto fica em **5,6 MB**.
 
 A `.sites-runtime` (1,3 GB) é criada pelo `pnpm dev` e é a maior de todas —
 não esqueça dela.
-
-Os cinco `orbis-web-v1*.tar.gz` na raiz são versões antigas do ORBIS (3 MB).
-Nada os usa; dá para apagar.
 
 ---
 

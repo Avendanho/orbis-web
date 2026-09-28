@@ -171,12 +171,21 @@ def preparar_orbis() -> bool:
         return False
     ok(f"Node {'.'.join(map(str, v))}")
 
-    if not (RAIZ / "node_modules").is_dir():
-        aviso("Instalando dependências web (uma vez só; pode levar alguns minutos)…")
+    # Uma atualização do código pode trazer dependência nova: o lockfile mais
+    # recente que a última instalação pede um pnpm install de novo.
+    marca = RAIZ / "node_modules" / ".modules.yaml"
+    lock = RAIZ / "pnpm-lock.yaml"
+    if not marca.exists() or (lock.exists() and lock.stat().st_mtime > marca.stat().st_mtime):
+        aviso("Instalando dependências web (pode levar alguns minutos)…")
         if subprocess.run(_pnpm(["install"]), cwd=RAIZ).returncode != 0:
             erro("pnpm install falhou.")
             return False
     ok("dependências web prontas")
+
+    hosting = RAIZ / ".openai" / "hosting.json"
+    if not hosting.exists():
+        shutil.copy(RAIZ / ".openai" / "hosting.example.json", hosting)
+        aviso("criei .openai/hosting.json a partir do exemplo")
     return preparar_banco()
 
 

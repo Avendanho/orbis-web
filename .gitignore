@@ -81,6 +81,10 @@ motor/**/output/
 # Estado de ferramentas de agente (cópias de backup do código).
 /.superpowers/
 # Identificador do projeto na hospedagem (estado local, como .agents/ e .codex/).
-/.openai/
+# O exemplo só declara os bindings; o start.py cria o hosting.json a partir dele.
+/.openai/*
+!/.openai/hosting.example.json
+# Artefatos de teste locais.
+/tmp/
 # Dados de pesquisa de uma execução do motor, não código.
 motor/*.csv
