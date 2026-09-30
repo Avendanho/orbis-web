@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from pathlib import Path
 
 ARQUIVO = Path(__file__).resolve().parent.parent / "motor" / ".env"
@@ -121,8 +122,16 @@ def gravar(mudancas: dict[str, str | None], arquivo: Path | None = None) -> list
     for k, v in pendentes.items():
         if v:
             saida.append(f"{k}={_codificar(v)}")
+    # O .env guarda chaves: a cópia nova herda a permissão do arquivo atual (um
+    # chmod 600 feito à mão continua valendo) e, se o arquivo é novo, só o dono
+    # lê. O temporário já nasce assim, sem ficar legível nem por um instante.
+    modo = stat.S_IMODE(f.stat().st_mode) if f.exists() else 0o600
     tmp = f.with_suffix(".tmp")
-    tmp.write_text("\n".join(saida) + "\n", encoding="utf-8")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, modo)
+    with os.fdopen(fd, "w", encoding="utf-8") as saida_arq:
+        saida_arq.write("\n".join(saida) + "\n")
+    os.chmod(tmp, modo)  # o umask pode ter tirado bits que o arquivo tinha
     tmp.replace(f)
     for k, v in mudancas.items():
         if v:

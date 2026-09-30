@@ -71,6 +71,25 @@ def test_desligar_opcao_ligada_por_padrao_grava_zero(arquivo):
     assert o["imagens"] is False and o["prazo"] == 30, "a extração já usa o valor novo, sem reiniciar"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="permissões POSIX")
+@pytest.mark.parametrize("modo", [0o600, 0o640])
+def test_gravar_preserva_a_permissao_do_arquivo(arquivo, modo):
+    # O .env guarda chaves: quem fez chmod 600 não pode perdê-lo ao salvar pela tela.
+    arquivo.chmod(modo)
+    config_env.gravar({"CORE_API_KEY": "core-123"})
+    assert stat.S_IMODE(arquivo.stat().st_mode) == modo
+
+
+@pytest.mark.skipif(os.name == "nt", reason="permissões POSIX")
+def test_env_criado_pela_tela_so_o_dono_le(tmp_path, monkeypatch):
+    novo = tmp_path / "novo.env"
+    monkeypatch.setattr(config_env, "ARQUIVO", novo)
+    monkeypatch.setenv("CORE_API_KEY", "x")
+    monkeypatch.delenv("CORE_API_KEY")
+    config_env.gravar({"CORE_API_KEY": "core-123"})
+    assert stat.S_IMODE(novo.stat().st_mode) == 0o600
+
+
 def test_valor_com_espaco_ou_cerquilha_vai_entre_aspas(arquivo):
     config_env.gravar({"WILEY_TDM_TOKEN": 'se#nha com "aspas"'})
     assert config_env.ler()["WILEY_TDM_TOKEN"] == 'se#nha com "aspas"'
