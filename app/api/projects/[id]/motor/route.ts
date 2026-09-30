@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers';
 import {identity,owned,database,bucket,body,ok,fail,ApiError,requireRole} from '@/lib/server';
 import {engineStatus,downloadViaEngine,EngineRefused} from '@/lib/python-bridge';
 import {isMode,textKey,motorSummary,motorSkip} from '@/lib/motor-download';
+import {exigirInclusao} from '@/lib/screening-db';
 const QUOTA=2*1024*1024*1024;
 // A interface pergunta isto para decidir se oferece os dois modos.
 export async function GET(r:Request,{params}:any){try{const actor=await identity(r),{id}=await params;await owned(id,actor);return ok(await engineStatus(env))}catch(e){return fail(e)}}
@@ -13,6 +14,7 @@ export async function POST(r:Request,{params}:any){try{
  const b=await body(r),doi=String(b.doi||''),modo=b.modo;if(!isMode(modo))throw new ApiError(400,'Modo de download inválido.');
  const db=database(),row=await db.prepare('SELECT result FROM search_items WHERE project=? AND doi=?').bind(id,doi).first<any>();if(!row)throw new ApiError(404,'DOI não está no lote.');
  const meta=JSON.parse(row.result||'null');if(!meta?.found)throw new ApiError(400,'Consulte o DOI antes de buscar o PDF.');
+ await exigirInclusao(db,id,doi,JSON.parse(p.state).protocol.version);
  const pulo=motorSkip(meta,modo);
  if(pulo){await db.prepare('UPDATE search_items SET result=?,error=?,updated=? WHERE project=? AND doi=?').bind(JSON.stringify({...meta,motor:pulo}),pulo.erro,new Date().toISOString(),id,doi).run();return ok({ok:false,motor:pulo});}
  let res;

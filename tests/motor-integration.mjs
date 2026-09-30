@@ -26,11 +26,15 @@ try{
  const auth={'oai-authenticated-user-id':'test-a','oai-authenticated-user-email':'test-a@example.test'};
  async function req(path,method='GET',data){const headers={...auth};if(data!==undefined)headers['content-type']='application/json';const r=await mf.dispatchFetch('https://test.example'+path,{method,headers,body:data!==undefined?JSON.stringify(data):undefined});const raw=await r.text();return {status:r.status,data:raw.startsWith('{')||raw.startsWith('[')?JSON.parse(raw):raw}}
  const bytes=async id=>(await db.prepare('SELECT bytes FROM projects WHERE id=?').bind(id).first()).bytes;
+ // Triagem antes do download: o motor só baixa o que foi incluído por título e resumo.
+ const protocolo={population:'P',concept:'C',context:'C',inclusion:'I',exclusion:'',questions:['A população atende?']};
+ async function incluir(pth,dois){const p=(await req(pth)).data;if(!p.state.protocol.approved)assert.equal((await req(pth,'PATCH',{revision:p.revision,action:'protocol',protocol:protocolo,approve:true})).status,200);for(const doi of dois){const d=await req(pth+'/screening','POST',{action:'decide',doi,answers:['Sim'],reason:''});assert.equal(d.status,200,JSON.stringify(d.data))}}
 
  let r=await req('/api/projects','POST',{name:'Motor'});const id=r.data.id,path='/api/projects/'+id;
  const at=new Date().toISOString();
  for(const doi of ['10.1234/ok','10.1234/baixado','10.1234/nada','10.1234/disco'])
   await db.prepare('INSERT INTO search_items(project,doi,status,result,updated) VALUES(?,?,?,?,?)').bind(id,doi,'done',JSON.stringify({doi,found:true,title:'Artigo '+doi,authors:'Silva',year:'2021',journal:'Teste',pdfUrls:[]}),at).run();
+ await incluir(path,['10.1234/ok','10.1234/baixado','10.1234/nada','10.1234/disco']);
 
  // Estado do motor para a interface.
  r=await req(path+'/motor');assert.equal(r.status,200);assert.equal(r.data.online,true);assert.equal(r.data.pdfDir,'/dados/pdfs');
@@ -67,6 +71,7 @@ try{
  // Incorporar a partir do motor: sem PDF no R2.
  let p=(await req(path)).data;
  r=await req(path,'PATCH',{revision:p.revision,action:'incorporate',doi:'10.1234/ok'});assert.equal(r.status,200,JSON.stringify(r.data));
+ {const t=r.data.state.articles.find(a=>a.doi==='10.1234/ok').triage;assert.deepEqual([t.decision,t.source,t.answers],['incluir','triagem_pre_download',['Sim']],'o artigo entra no corpus com a decisão da triagem pré-download')}
  p=(await req(path)).data;
  const art=p.state.articles.find(a=>a.doi==='10.1234/ok');
  assert.equal(art.source.kind,'motor');assert.equal(art.source.modo,'analisar');assert.equal(art.texto.key,key);assert.equal(art.identity.ok,true);
@@ -112,6 +117,7 @@ try{
  // (senão o lote baixa de novo e cobra o texto duas vezes).
  r=await req('/api/projects','POST',{name:'Reconsulta'});const id3=r.data.id,path3='/api/projects/'+id3;
  await db.prepare('INSERT INTO search_items(project,doi,status,result,updated) VALUES(?,?,?,?,?)').bind(id3,'10.1234/ok','done',JSON.stringify({doi:'10.1234/ok',found:true,title:'Artigo',pdfUrls:[]}),at).run();
+ await incluir(path3,['10.1234/ok']);
  await req(path3+'/motor','POST',{doi:'10.1234/ok',modo:'analisar'});const antes=await bytes(id3);
  await req(path3+'/search','POST',{doi:'10.1234/ok',retry:true});
  assert.equal((await req(path3)).data.searches[0].result?.motor?.ok,true,'reconsulta preserva o motor');
@@ -120,6 +126,7 @@ try{
  // Backup restaurado não pode apontar para textos do projeto de origem.
  r=await req('/api/projects','POST',{name:'Origem'});const idA=r.data.id,pathA='/api/projects/'+idA;
  for(const doi of ['10.1234/ok','10.1234/baixado'])await db.prepare('INSERT INTO search_items(project,doi,status,result,updated) VALUES(?,?,?,?,?)').bind(idA,doi,'done',JSON.stringify({doi,found:true,title:'Artigo '+doi,pdfUrls:[]}),at).run();
+ await incluir(pathA,['10.1234/ok','10.1234/baixado']);
  const oneMore={...respostas['10.1234/ok']};respostas['10.1234/baixado']={...oneMore};
  await req(pathA+'/motor','POST',{doi:'10.1234/ok',modo:'analisar'});await req(pathA+'/motor','POST',{doi:'10.1234/baixado',modo:'analisar'});
  let pA=(await req(pathA)).data;await req(pathA,'PATCH',{revision:pA.revision,action:'incorporate',doi:'10.1234/ok'});

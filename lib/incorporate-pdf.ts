@@ -4,13 +4,18 @@ import {retrievePdf} from './pdf-transfer';
 import {checkIdentity} from './identity';
 import {motorArticle} from './motor-download';
 import {extractPdfDetails} from './pdf-abstract';
+import {exigirInclusao} from './screening-db';
+import {triagemParaArtigo} from './screening';
 const QUOTA=2*1024*1024*1024;
 export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string){
  const db=database(),row=await db.prepare("SELECT result FROM search_items WHERE project=? AND doi=? AND status IN ('done','partial')").bind(p.id,doi).first<any>();
  if(!row)throw new ApiError(400,'Consulte o DOI antes de incorporar.');
  if(state.articles.some((a:any)=>a.doi===doi))throw new ApiError(409,'DOI já incorporado.');
  if(state.articles.length>=2000)throw new ApiError(400,'Limite de 2.000 registros por projeto.');
- const metadata=JSON.parse(row.result||'null');if(!metadata?.found)throw new ApiError(400,'Metadados não encontrados.');if(metadata.motor?.ok)return incorporateFromMotor(p,actor,state,doi,metadata);if(!Array.isArray(metadata.pdfUrls)||!metadata.pdfUrls.length)throw new ApiError(422,'PDF gratuito não localizado. O artigo permanece fora do corpus.');
+ const metadata=JSON.parse(row.result||'null');if(!metadata?.found)throw new ApiError(400,'Metadados não encontrados.');
+ // Triagem de títulos e resumos antes do download: só o que foi incluído entra.
+ const triagem=triagemParaArtigo(await exigirInclusao(db,p.id,doi,state.protocol.version));
+ if(metadata.motor?.ok)return incorporateFromMotor(p,actor,state,doi,metadata,triagem);if(!Array.isArray(metadata.pdfUrls)||!metadata.pdfUrls.length)throw new ApiError(422,'PDF gratuito não localizado. O artigo permanece fora do corpus.');
  let reserved=0,docId='',key='',committed=false;
  try{
   const resolved=await resolveArticle(doi,true),urls=[...new Set([...(resolved.pdfUrls||[]),...(metadata.pdfUrls||[])])].slice(0,12);
@@ -33,7 +38,7 @@ export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string
    {pageDoi:metadata.pageDoi||resolved.pageDoi,pageTitle:metadata.pageTitle,pageYear:metadata.pageYear?String(metadata.pageYear):undefined});
   let pdfDetails:any={title:'',abstract:'',documentType:null};try{pdfDetails=await extractPdfDetails(bytes)}catch{}
   const abstract=pdfDetails.abstract||resolved.abstract||metadata.abstract||'',abstractSource=pdfDetails.abstract?'Extraído do PDF':resolved.abstract?resolved.abstractSource:metadata.abstractSource;
-  state.articles.push({id:articleId,doi,title:pdfDetails.title||metadata.title||resolved.title,titleSource:pdfDetails.title?'Extraído do PDF':metadata.title?'Base bibliográfica':'Metadados do DOI',titleConfirmed:!!pdfDetails.title,authors:metadata.authors||resolved.authors,year:metadata.year||resolved.year,abstract,abstractStatus:abstract?'found':'not_found',abstractSource:abstractSource||'',documentType:pdfDetails.documentType||null,filename,identity:{ok:veredito.ok,method:veredito.method,score:veredito.score,detail:veredito.detail,checkedAt:new Date().toISOString()},source:{pdf:resolved.pdf,pdfUrls:urls,source:metadata.source,reason:'PDF validado e armazenado',reasonDetail:veredito.detail}});
+  state.articles.push({id:articleId,doi,title:pdfDetails.title||metadata.title||resolved.title,titleSource:pdfDetails.title?'Extraído do PDF':metadata.title?'Base bibliográfica':'Metadados do DOI',titleConfirmed:!!pdfDetails.title,authors:metadata.authors||resolved.authors,year:metadata.year||resolved.year,abstract,abstractStatus:abstract?'found':'not_found',abstractSource:abstractSource||'',documentType:pdfDetails.documentType||null,filename,identity:{ok:veredito.ok,method:veredito.method,score:veredito.score,detail:veredito.detail,checkedAt:new Date().toISOString()},source:{pdf:resolved.pdf,pdfUrls:urls,source:metadata.source,reason:'PDF validado e armazenado',reasonDetail:veredito.detail},triage:triagem});
   await db.prepare("UPDATE documents SET status='ready' WHERE id=? AND project=?").bind(docId,p.id).run();
   const result=await commit(p,actor,state,'incorporate');committed=true;reserved=0;
   await db.prepare('INSERT INTO pdf_attempts(id,project,article,status,reason,created) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),p.id,articleId,'saved','PDF validado e armazenado antes da incorporação',new Date().toISOString()).run().catch(()=>{});
@@ -51,10 +56,10 @@ export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string
 // O motor já baixou, validou a identidade pelo conteúdo e extraiu o texto na
 // fase 1. Aqui só se grava o registro: nenhum PDF vai para o R2 (no modo
 // "baixar" ele está na pasta local; no "analisar" já foi descartado).
-async function incorporateFromMotor(p:any,actor:string,state:any,doi:string,metadata:any){
+async function incorporateFromMotor(p:any,actor:string,state:any,doi:string,metadata:any,triagem:any){
  const db=database(),articleId=crypto.randomUUID(),at=new Date().toISOString();
  const filename='artigo_'+(state.articles.length+1)+'_'+doi.replace(/[^a-z0-9.-]/gi,'_')+'.pdf';
- state.articles.push(motorArticle(doi,metadata,articleId,filename,at));
+ state.articles.push({...motorArticle(doi,metadata,articleId,filename,at),triage:triagem});
  const result=await commit(p,actor,state,'incorporate');
  await db.prepare('INSERT INTO pdf_attempts(id,project,article,status,reason,created) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),p.id,articleId,'saved','PDF validado pelo motor (modo '+metadata.motor.modo+')',at).run().catch(()=>{});
  await db.prepare('UPDATE search_items SET error=NULL WHERE project=? AND doi=?').bind(p.id,doi).run().catch(()=>{});

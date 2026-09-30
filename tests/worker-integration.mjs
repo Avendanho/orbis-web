@@ -11,7 +11,21 @@ assert.equal((await req(path,'PATCH',{revision:0,action:'protocol',protocol,appr
 assert.equal((await req(path,'PATCH',{revision:0,action:'notes',notes:'old'})).status,409);
 assert.equal((await req(path,'PATCH',{revision:1,action:'notes',notes:'foreign'},'test-a',{origin:'https://evil.example'})).status,403);
 await db.prepare('INSERT INTO search_items(project,doi,status,result,error,updated) VALUES(?,?,?,?,?,?)').bind(id,'10.1234/sem-pdf','done',JSON.stringify({doi:'10.1234/sem-pdf',found:true,title:'Sem PDF',pdfUrls:[]}),null,new Date().toISOString()).run();
-assert.equal((await req(path,'PATCH',{revision:1,action:'incorporate',doi:'10.1234/sem-pdf'})).status,422);
+// Triagem antes do download: sem decisão de inclusão na versão atual, nada é baixado.
+await db.prepare('INSERT INTO search_items(project,doi,status,result,error,updated) VALUES(?,?,?,?,?,?)').bind(id,'10.1234/nao-triado','done',JSON.stringify({doi:'10.1234/nao-triado',found:true,title:'Não triado',pdfUrls:[]}),null,new Date().toISOString()).run();
+r=await req(path,'PATCH',{revision:1,action:'incorporate',doi:'10.1234/sem-pdf'});assert.equal(r.status,409,JSON.stringify(r));assert.match(r.data.message,/Trie/);
+r=await req(path+'/motor','POST',{doi:'10.1234/nao-triado',modo:'analisar'});assert.equal(r.status,409,JSON.stringify(r));
+assert.equal((await req(path+'/screening','POST',{action:'decide',doi:'10.1234/sem-pdf',answers:['Não'],reason:''})).status,400,'exclusão exige justificativa');
+assert.equal((await req(path+'/screening','POST',{action:'decide',doi:'10.9999/fora-do-lote',answers:['Sim'],reason:''})).status,404);
+assert.equal((await req(path+'/screening','POST',{action:'decide',doi:'10.1234/sem-pdf',answers:['Sim'],reason:''},'test-b')).status,404,'outra conta não vê o projeto');
+r=await req(path+'/screening','POST',{action:'decide',doi:'10.1234/sem-pdf',answers:['Sim'],reason:''});assert.equal(r.status,200,JSON.stringify(r));
+assert.equal((await req(path)).data.screening.find(x=>x.doi==='10.1234/sem-pdf').decision,'incluir');
+assert.equal((await req(path+'/screening','POST',{action:'acceptAI',dois:['10.1234/sem-pdf']})).status,409,'sem sugestão atual não há o que aceitar');
+assert.equal((await req(path,'PATCH',{revision:1,action:'incorporate',doi:'10.1234/sem-pdf'})).status,422,'incluído, mas sem PDF: a regra de antes vale');
+assert.equal((await req(path)).data.state.articles.length,0);
+r=await req(path,'PATCH',{revision:1,action:'clearStage',stage:'search'});assert.equal(r.status,200,JSON.stringify(r));
+assert.deepEqual((await req(path)).data.screening,[],'limpar o Artigo Aberto apaga a triagem dos registros');
+await db.prepare('INSERT INTO search_items(project,doi,status,result,error,updated) VALUES(?,?,?,?,?,?)').bind(id,'10.1234/sem-pdf','done',JSON.stringify({doi:'10.1234/sem-pdf',found:true,title:'Sem PDF',pdfUrls:[]}),null,new Date().toISOString()).run();
 assert.equal((await req(path)).data.state.articles.length,0);
 assert.equal((await req(path)).data.documents.length,0);
 r=await req('/api/projects','POST',{name:'Restaurar teste'});const restored='/api/projects/'+r.data.id;const state=(await req(path)).data.state;state.articles=[{id:'article',filename:'test.pdf',doi:'10.1234/test',title:'Artigo sintético',authors:'Teste',year:'2026',abstract:'Resumo'}];assert.equal((await req(restored,'PATCH',{revision:0,action:'restore',state,expected:['test.pdf'],hash:'test'})).status,200);
@@ -59,6 +73,9 @@ const aiBackup=await req('/api/projects','POST',{name:'IA backup'}),aiBackupPath
 const aiBackupState=structuredClone(aiSaved.state);delete aiBackupState.articles[0].triage;delete aiBackupState.articles[0].fulltext;delete aiBackupState.articles[0].finalReview;
 assert.equal((await req(aiBackupPath,'PATCH',{revision:0,action:'restore',state:aiBackupState,expected:[],hash:'ai-backup'})).status,200);
 assert.equal((await req(aiBackupPath,'PATCH',{revision:1,action:'finishImport'})).status,200);
+const scBackup=await req('/api/projects','POST',{name:'Triagem backup'}),scPath='/api/projects/'+scBackup.data.id;
+r=await req(scPath,'PATCH',{revision:0,action:'restore',state:aiBackupState,expected:[],hash:'sc-backup',searches:[{doi:'10.1234/r',status:'done',result:{doi:'10.1234/r',found:true,title:'R'}}],screening:[{doi:'10.1234/r',decision:'incluir',answers:['Sim'],reasons:[''],reason:'',actor:'x',version:aiBackupState.protocol.version,source:'',ai:null},{doi:'invalido',decision:'incluir'}]});assert.equal(r.status,200,JSON.stringify(r));
+assert.deepEqual((await req(scPath)).data.screening.map(x=>[x.doi,x.decision]),[['10.1234/r','incluir']],'backup traz a triagem; linha inválida é ignorada');
 let aiBackupSaved=(await req(aiBackupPath)).data;assert.equal(aiBackupSaved.state.articles[0].aiAnalyses[0].summary,'Resumo sintético da IA');
 const acceptedAI=await req(aiBackupPath,'PATCH',{revision:2,action:'acceptAITriageBulk',choices:[{article:'article',analysis:aiBackupSaved.state.articles[0].aiAnalyses[0].id}]});assert.equal(acceptedAI.status,200,JSON.stringify(acceptedAI));assert.equal(acceptedAI.data.state.articles[0].triage.source,'ia_accepted');assert.equal(acceptedAI.data.state.articles[0].triage.decision,'excluir');
 assert.equal((await req(restored,'PATCH',{revision:aiSaved.revision,action:'removeAI',selector:{scope:'article',article:'article',analysis:aiSaved.state.articles[0].aiAnalyses[0].id}},'test-b')).status,404);
