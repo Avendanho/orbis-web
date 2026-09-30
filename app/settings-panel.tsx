@@ -60,16 +60,17 @@ export default function SettingsPanel({onChange}:{onChange?:(orbis:any)=>void}){
  return <>
   <div className="page-heading"><div><p className="eyebrow">Esta instalação</p><h1>Configurações</h1><p className="muted">Valem para todos os projetos. Chaves nunca aparecem inteiras. O que for salvo aqui vale antes das variáveis de ambiente.</p></div></div>
   {aviso&&<p className="notice">{aviso}</p>}
+  {!dados.editavel&&<p className="notice">Este ORBIS está hospedado: as configurações só podem ser alteradas na instalação local (start.py). Aqui valem as variáveis de ambiente da hospedagem.</p>}
   {GRUPOS.map(([grupo,titulo,descricao,alvos])=>{
    const itens=CATALOGO.filter(i=>i.grupo===grupo);
    const motorFora=itens.some(i=>i.destino==='motor')&&!dados.motor?.online;
    const pendente=itens.some(i=>i.key in rascunho);
    return <section className="panel" key={grupo}>
-    <div className="section-top"><div><h2>{titulo}</h2><p className="muted">{descricao}</p></div><Button disabled={!pendente||!!salvando} onClick={()=>salvar(grupo)}>{salvando===grupo?'Salvando…':'Salvar'}</Button></div>
+    <div className="section-top"><div><h2>{titulo}</h2><p className="muted">{descricao}</p></div><Button disabled={!dados.editavel||!pendente||!!salvando} onClick={()=>salvar(grupo)}>{salvando===grupo?'Salvando…':'Salvar'}</Button></div>
     {motorFora&&<p className="notice">O motor não está no ar, ou foi iniciado fora do start.py. As opções só do motor ficam bloqueadas até ele subir pelo start.py.</p>}
     {grupo==='ia'&&<p className="muted">Ollama {dados.ollama?.online?'no ar: '+(dados.ollama.modelos.length?dados.ollama.modelos.length+' modelo(s) instalado(s).':'nenhum modelo instalado (ollama pull qwen3:14b).'):'fora do ar neste endereço.'}</p>}
-    {itens.map(i=><Campo key={i.key} item={i} atual={atual(i)} rascunho={rascunho[i.key]} desabilitado={motorFora&&i.destino==='motor'} modelos={dados.ollama?.modelos||[]} mudar={mudar}/>)}
-    {alvos.length>0&&<div className="actions">{alvos.map(a=><Button key={a} variant="outline" disabled={!!testes[a]?.carregando} onClick={()=>testar(a)}>{testes[a]?.carregando?'Testando…':'Testar '+ROTULO_ALVO[a]}</Button>)}</div>}
+    {itens.map(i=><Campo key={i.key} item={i} atual={atual(i)} rascunho={rascunho[i.key]} desabilitado={!dados.editavel||(motorFora&&i.destino==='motor')} modelos={dados.ollama?.modelos||[]} mudar={mudar}/>)}
+    {alvos.length>0&&<div className="actions">{alvos.map(a=><Button key={a} variant="outline" disabled={!dados.editavel||!!testes[a]?.carregando} onClick={()=>testar(a)}>{testes[a]?.carregando?'Testando…':'Testar '+ROTULO_ALVO[a]}</Button>)}</div>}
     {alvos.filter(a=>testes[a]&&!testes[a].carregando).map(a=><p key={a} className={testes[a].ok?'muted':'notice'}>{testes[a].ok?'✓':'✗'} {ROTULO_ALVO[a]}: {testes[a].detalhe}</p>)}
    </section>;
   })}

@@ -271,6 +271,11 @@ mesmo nome gerado se sobrescrevam. Detalhes e medições em
   caracteres, e nem isso abaixo de 12 caracteres. `semSegredos()` limpa as
   mensagens de erro (a chave do Gemini vai na URL).
 - Valores com `\r`, `\n` ou `\0` são recusados (injeção de linha no `.env`).
+- `PUT` e `POST /api/settings` só aceitam pedidos para `localhost`,
+  `127.0.0.1` ou `::1`: num ORBIS hospedado, qualquer pessoa logada mudaria a
+  instalação de todos (por exemplo, `OLLAMA_URL` apontando para um servidor
+  seu, recebendo os textos dos projetos dos outros). Lá a tela é só leitura
+  (`editavel:false`) e valem as variáveis de ambiente.
 - O motor escuta só em `127.0.0.1` e aceita CORS de qualquer origem; por isso
   `/config` exige `X-Orbis-Token` (comparação em tempo constante). O token é
   criado uma vez pelo `start.py` e trafega só entre servidores.

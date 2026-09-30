@@ -254,6 +254,12 @@ a chave funciona. As chaves nunca aparecem inteiras na tela — só os quatro
 últimos caracteres. Ao lado de cada item, uma etiqueta diz de onde vem o valor:
 *salvo aqui*, *do ambiente* ou *padrão*.
 
+As configurações só podem ser alteradas na instalação local (o ORBIS aberto
+pelo `start.py`). Num ORBIS publicado na internet para a equipe, a tela fica
+só de leitura e valem as variáveis de ambiente da hospedagem — senão qualquer
+pessoa logada poderia mudar, por exemplo, para onde vão os textos analisados
+pela IA.
+
 O acesso institucional (sessão CAPES/CAFe, EZproxy, proxy) não está na tela:
 continua sendo configurado no arquivo `motor/.env`, como explica o
 [COMO_RODAR.md](../COMO_RODAR.md).

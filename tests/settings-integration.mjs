@@ -32,10 +32,20 @@ try{
  const db=await mf.getD1Database('DB');
  for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())for(const sql of readFileSync('drizzle/'+f,'utf8').split('--> statement-breakpoint'))if(sql.trim())await db.prepare(sql).run();
  const auth={'oai-authenticated-user-id':'test-a','oai-authenticated-user-email':'test-a@example.test'};
- async function req(method='GET',data,headers=auth,path='/api/settings'){const h={...headers};if(data!==undefined)h['content-type']='application/json';const r=await mf.dispatchFetch('https://test.example'+path,{method,headers:h,body:data!==undefined?JSON.stringify(data):undefined});const raw=await r.text();return {status:r.status,raw,data:raw?JSON.parse(raw):null};}
+ // Configurações só mudam na instalação local: o ORBIS do start.py responde em localhost.
+ async function req(method='GET',data,headers=auth,path='/api/settings',origem='http://localhost:5173'){const h={...headers};if(data!==undefined)h['content-type']='application/json';const r=await mf.dispatchFetch(origem+path,{method,headers:h,body:data!==undefined?JSON.stringify(data):undefined});const raw=await r.text();return {status:r.status,raw,data:raw?JSON.parse(raw):null};}
 
  // Login obrigatório.
  assert.equal((await req('GET',undefined,{})).status,401);
+ // Hospedado (outro endereço): qualquer pessoa logada leria e mudaria a
+ // instalação inteira — por exemplo, apontar o Ollama para um servidor seu e
+ // receber os textos dos projetos dos outros. Lá, só leitura.
+ const fora='https://orbis.exemplo.org';
+ let h=await req('GET',undefined,auth,'/api/settings',fora);assert.equal(h.status,200);assert.equal(h.data.editavel,false);
+ h=await req('PUT',{mudancas:{OLLAMA_URL:'http://atacante.exemplo',ORBIS_IA_PROVEDOR:'local'}},auth,'/api/settings',fora);assert.equal(h.status,403);assert.match(h.data.message,/instalação local/);
+ assert.equal((await req('POST',{acao:'testar',alvo:'ollama'},auth,'/api/settings',fora)).status,403,'Testar também sai para a rede');
+ assert.equal((await req()).data.orbis.OLLAMA_URL.valor,'http://ollama.test','nada gravado');
+ assert.equal((await req()).data.editavel,true);
 
  // Ambiente aparece mascarado, com origem; motor e Ollama no ar.
  let r=await req();assert.equal(r.status,200,r.raw);
