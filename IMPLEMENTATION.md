@@ -1,36 +1,58 @@
-# ORBIS Web — piloto privado
+# ORBIS Web — o que está implementado e seus limites
 
-Implementado: projetos isolados por proprietário, protocolo versionado e aprovação humana, busca DOI persistida (500 por lote), incorporação explícita, PDFs R2 privados (30 MB/arquivo, 2 GB/projeto), tentativas/motivos, triagem positiva, pareceres identificados, adjudicação, revisão final, contagens determinísticas, backup .orbis com extensão web, restauração em projeto novo, histórico, exclusão confirmada e apoio de IA por intercâmbio manual.
+O funcionamento completo está em [docs/SISTEMA.md](docs/SISTEMA.md) (para quem
+usa) e [docs/ARQUITETURA.md](docs/ARQUITETURA.md) (para quem mexe no código).
+Este arquivo guarda o resumo do que existe e, principalmente, os limites que
+continuam valendo.
 
-Validações: TypeScript e build; testes de regras/backup/corrupção; Worker compilado exercitado no Miniflare com D1 e R2 temporários, autenticação simulada nos cabeçalhos de teste, isolamento entre duas identidades, conflitos de versão, importação retomável, arquivos, lote de 500 registros e fluxo metodológico. A identidade da produção é fornecida pelo dispatcher Sites. Apenas a tela de entrada foi conferida no navegador de prévia: autenticação hospedada não é simulada nesse ambiente.
+## Implementado
 
-Limites deste piloto:
-- Conta única por projeto. Pareceres são transcritos pelo proprietário com nomes declarados; não equivalem a revisores autenticados ou revisão cega. Compartilhamento e contas colaborativas ainda não estão implementados.
-- Lotes retomáveis persistem no banco, mas o navegador solicita cada tarefa; fechar a aba interrompe o avanço depois das requisições já enviadas.
-- Um PDF armazenado por artigo; validar assinatura não garante correspondência científica. O usuário deve conferir a identidade. Não há antivírus, OCR ou extração de texto integral na web nesta versão.
-- Até 2.000 registros por projeto e 1,8 milhão de caracteres no estado estruturado; corpos maiores são recusados com preservação dos dados. PDFs não integram esse estado.
-- Backup V1 sem compressão, verificação CRC e hash legado; arquivos recebem SHA-256 ao armazenar. Extensão orbis_web preserva o estado web. Legado conserva decisões/histórico originais e apresenta PCC como rascunho, sem aprovações automáticas. Retorno ao HTML local não interpreta todos os campos novos.
-- Exportação de grandes backups depende da memória disponível no navegador; não foi ensaiado um pacote de 2 GB.
-- PRISMA inicia no corpus incorporado. Não há inventário de registros descartados antes da incorporação nem contagem metodológica de duplicatas externas. Não chamar isso de PRISMA publicado completo sem conferir essas entradas.
-- IA conectada não configurada; exportar/importar sugestões manualmente não transmite documentos automaticamente nem altera decisões.
-- Exclusão é definitiva com nome digitado; não há lixeira automática ou retenção de 30 dias.
-- DNS público e checagem de cada redirecionamento reduzem SSRF; DNS nativo e HTTP não oferecem pinning de endereço nesta implementação.
-- Reservas de quota para uploads interrompidos abruptamente podem precisar de reconciliação administrativa. Não alegar armazenamento distribuído transacional entre D1 e R2.
+- Projetos com equipe (coordenador, colaborador, revisor, somente leitura),
+  protocolo versionado com aprovação humana e histórico de cada alteração.
+- Identificação por DOI (500 por lote, retomável) ou busca em PubMed, LILACS,
+  Cochrane e Embase; metadados e resumo de fontes públicas.
+- Triagem de títulos e resumos **antes do download**, com sugestões de IA que
+  só viram decisão quando aceitas; só os incluídos são baixados.
+- Obtenção do texto completo pelo motor (cascata de fontes com validação de
+  identidade pelo conteúdo do PDF, texto em Markdown, imagens na pasta local)
+  ou pelo próprio Worker (PDF no R2).
+- PDFs importados do computador, triagem no corpus, análise PCC com dois
+  pareceres e adjudicação, revisão geral, PRISMA desde a identificação,
+  relatórios HTML/Word/CSV.
+- IA de nuvem (Anthropic, OpenAI, Gemini) ou local (Ollama), em lotes com
+  progresso e pausa; intercâmbio manual por pacote JSON continua disponível.
+- Tela Configurações (bases, IA, lote, extração, fontes do motor) com teste de
+  cada credencial.
+- Backup `.orbis` completo (inclui lote, triagem de títulos e resumos e textos
+  extraídos) e restauração em projeto novo.
 
-Nenhum corpus embutido ou projeto real do usuário foi migrado. Dados de testes ficam apenas no banco temporário dos testes e não compõem o artefato de publicação.
+## Limites conhecidos
 
-Teste de fontes externas no Worker local em 22/09: inconclusivo por falha de DNS do ambiente; o sistema retornou busca incompleta e bloqueou incorporação sem metadados. Não contabilizar esse ensaio como download real aprovado.
-
-## Atualização — análises de IA integradas
-- Triagem e PCC aceitam ORBIS_AI_RESULTS_V1 e ORBIS_CHATGPT_RESULTS_V1 do sistema original, por arquivo ou texto JSON. As análises são persistidas por artigo, fornecedor/modelo e execução; não substituem decisões humanas.
-- Coluna IA, filtro de concordância/divergência/contexto, ficha por critério, evidências, indicação de duplicatas, remoção por artigo/execução/fornecedor, associação manual de pendências e relatório de importação.
-- Exportação de pedido estruturado e, para PCC, ZIP com PDFs disponíveis. Relatórios HTML imprimíveis/PDF pelo navegador, DOCX e CSV. Backup preserva análises web e as representa também no campo analisesIA do formato local.
-- Critérios ou fonte alterados tornam a análise histórica. Resultados antigos sem contexto verificável continuam visíveis, fora da concordância atual. Correspondências aproximadas não são feitas silenciosamente; o usuário associa os pendentes.
-- Não há inferência ou chamada de IA automática: o intercâmbio permanece manual. Propostas de planejamento em texto continuam distintas de resultados de avaliação por artigo. O projeto ainda usa limite de 1,8 MB de estado; importações que excedam esse limite são recusadas atomicamente.
-- Testes cobrem importação, contexto, divergência, associação, exclusões preservando decisões humanas, persistência D1 e restauração com análises. Não se reivindica validação visual autenticada do site publicado.
-
-## Correções — PCC, triagem e DOI
-- A leitura de resultados de IA aceita respostas PCC com criterios estruturados ou marcações simples, blocos JSON com texto em volta, envoltórios de resultados e lotes de até 30 avaliações por envio para a API. O relatório mostra itens não associados e permite associação explícita. Contexto ausente permanece histórico e é sinalizado.
-- DOI consultado não entra no corpus sem PDF validado: a ação de incorporação baixa o PDF, confere a assinatura, reserva a cota, armazena o arquivo e só então confirma o registro. Erros da fonte são exibidos em cada DOI. Resultados anteriores sem PDF continuam disponíveis para reconsulta e não são removidos automaticamente.
-- O planejamento original foi adaptado em duas fases: objetivo/pergunta/PCC/inclusão/exclusão; perguntas positivas de triagem com origem, orientações e exemplos. Há histórico, propostas da IA por pacote JSON, aprovação item a item e laboratório de até 8 artigos, sem modificar decisões humanas. As orientações aprovadas aparecem na avaliação dos artigos. O intercâmbio de IA é manual, sem chamadas automáticas.
-- Testes sintéticos cobriram recusa de incorporação sem PDF e ausência de registro no corpus, importação PCC original e aprovação persistida das duas fases. A obtenção externa completa e a interface autenticada publicada ainda dependem de conferência com um arquivo e um DOI reais na conta do usuário.
+- **Tamanho.** Até 2.000 artigos no corpus e 1,8 milhão de caracteres no estado
+  estruturado de um projeto; corpos maiores são recusados com os dados
+  preservados. PDFs, textos, o lote de DOIs e a triagem de títulos e resumos
+  ficam fora desse estado. 30 MB por PDF e 2 GB por projeto.
+- **Lotes dependem da aba aberta.** O lote persiste no banco, mas é o navegador
+  que pede cada consulta, cada download e cada lote de IA; fechar a aba
+  interrompe o avanço (retomar continua de onde parou).
+- **Identidade do PDF.** O motor confere a identidade pelo conteúdo; o download
+  pelo Worker confere a assinatura e os metadados. Em ambos, confira a
+  correspondência antes de avaliar. Não há antivírus nem OCR.
+- **Recuperação.** Só metade de um acervo típico tem cópia aberta; o resto
+  depende do acesso institucional configurado no `motor/.env`
+  ([motor/ANALISE.md](motor/ANALISE.md)).
+- **IA.** Resultado é rascunho; chamadas que falham ficam pendentes. Modelos
+  locais pequenos erram mais — confira uma amostra antes de aceitar em bloco.
+  A IA lê só o texto (não as imagens).
+- **Backup.** Formato V1 sem compressão; a exportação de projetos grandes
+  depende da memória do navegador (um pacote de 2 GB não foi ensaiado). O
+  retorno ao HTML local do ORBIS original não interpreta todos os campos
+  novos.
+- **Exclusão** é definitiva, confirmada pelo nome digitado; não há lixeira.
+- **Rede.** O download pelo Worker checa por DNS que o destino é público, mas
+  não fixa o endereço entre a checagem e a conexão.
+- **Cota.** Reservas de cota de envios interrompidos abruptamente podem
+  precisar de reconciliação manual; D1 e R2 não são uma transação só.
+- **Configurações** valem para a instalação inteira, não por pessoa. As chaves
+  ficam em texto no disco local (banco e `motor/.env`), como no `.env`; a
+  proteção é nunca devolvê-las ao navegador.

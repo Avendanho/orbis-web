@@ -14,7 +14,7 @@ orbis-web/
  │   ├─ scripts/              utilitários avulsos
  │   └─ requirements.txt
  ├─ servico-python/         expõe o motor para o ORBIS
- └─ docs/                   hospedagem Sites e planos pendentes
+ └─ docs/                   SISTEMA.md, ARQUITETURA.md, hospedagem, planos
 ```
 
 O motor **não tem interface própria**. Ele é um mecanismo; quem mostra as
@@ -56,8 +56,10 @@ Se o Python falhar, o ORBIS sobe assim mesmo — sem as capacidades que dependem
 dele (baixar pela cadeia completa de fontes, ler o texto de dentro do PDF e
 conferir identidade pelo conteúdo).
 
-As chaves de API ficam em `motor/.env`, criado a partir de `motor/.env.example`
-na primeira execução. Nenhuma é obrigatória.
+Nenhuma chave de API é obrigatória. Cadastre as que tiver pela tela
+**Configurações** (barra lateral): ela grava as do ORBIS no banco local e as do
+motor em `motor/.env` (criado a partir de `motor/.env.example` na primeira
+execução), e tem um botão **Testar** para cada uma.
 
 ### Node pelo nvm (Linux, opcional no macOS)
 
@@ -68,6 +70,30 @@ nvm install 22
 ```
 
 O `start.py` carrega o nvm sozinho quando ele existe.
+
+---
+
+## IA local (Ollama)
+
+A triagem e a análise PCC podem usar um modelo que roda na sua máquina, sem
+mandar os textos para a nuvem:
+
+1. Instale o [Ollama](https://ollama.com) e deixe-o aberto.
+2. Baixe o modelo padrão (≈ 9 GB; precisa de uma GPU com 16 GB para rodar
+   bem):
+
+   ```bash
+   ollama pull qwen3:14b
+   ```
+
+3. Em **Configurações → IA**, clique **Testar Ollama (local)**. Com o
+   provedor em *Automático* (o padrão), o ORBIS usa o modelo local sempre que
+   o Ollama responde, e cai na primeira chave de nuvem quando não responde.
+
+Outro modelo instalado aparece na lista **Modelo local**. **Contexto** limita
+quanto texto completo cabe por artigo na PCC (maior = mais memória da GPU);
+**Prazo** é o tempo máximo de uma chamada. Conte com 15 a 25 segundos por
+registro na triagem com o `qwen3:14b`.
 
 ---
 
@@ -220,6 +246,9 @@ que não contam para a meta) e, com `--teto-oa`, separa "o motor errou" de
 ### Onde ficam os dados
 
 Por padrão na raiz do motor: `motor/pdfs/`, `motor/data/`, `motor/relatorio/`.
+No modo "baixar", cada artigo fica em `motor/pdfs/<projeto>/` como PDF, `.md`
+(o texto em Markdown) e `<nome>_imagens/`. O token da tela de Configurações
+fica em `motor/data/orbis-token`.
 Para apontar um acervo que já existe:
 
 ```bash
@@ -251,12 +280,16 @@ Todas opcionais. Sem elas o sistema funciona, só com menos recursos.
 | `ORBIS_SESSAO_NAVEGADOR`, `ORBIS_SESSAO_EZPROXY` | Sessão institucional CAPES/CAFe ou EZproxy (ver acima) | Artigos de assinatura não saem |
 | `NCBI_API_KEY`, `NCBI_EMAIL` | Eleva o teto de consultas do PubMed (e da Cochrane, que passa pelo PubMed) | Funciona, mais devagar |
 | `EMBASE_API_KEY` (ou `ELSEVIER_API_KEY`), `EMBASE_INST_TOKEN` (ou `ELSEVIER_INST_TOKEN`) | Busca no Embase | A busca no Embase responde com erro de credencial; as outras bases seguem |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Triagem automática por IA | O botão não aparece; a importação manual continua |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, `ORBIS_IA_MODELO_*` | IA de nuvem e o modelo de cada provedor | Só a IA local (se o Ollama estiver aberto) ou a importação manual |
+| `ORBIS_IA_PROVEDOR` | `automatico` (padrão), `local`, `anthropic`, `openai` ou `gemini` | Automático |
+| `OLLAMA_URL`, `OLLAMA_MODELO`, `OLLAMA_CONTEXTO`, `OLLAMA_PRAZO`, `ORBIS_IA_LOTE` | IA local e tamanho do lote de IA | `http://localhost:11434`, `qwen3:14b`, 16384, 600 s, 10 |
+| `ORBIS_EXTRAIR_MARKDOWN`, `ORBIS_SALVAR_IMAGENS`, `ORBIS_EXTRACAO_PRAZO` | Texto em Markdown e imagens ao lado do PDF (motor) | Ligados; prazo de 90 s |
 | `ORBIS_ENGINE_URL` | Liga o ORBIS ao motor | O ORBIS ignora o motor |
 | `ORBIS_DATA_DIR` | Onde o motor guarda PDFs e banco | Usa a raiz do motor |
 
-As chaves do motor vão em `motor/.env`. As do ORBIS, no ambiente do Worker.
-**Nenhuma delas entra no repositório.**
+Pela tela, tudo vai ao lugar certo. À mão: as do motor em `motor/.env`; as do
+ORBIS, no ambiente do Worker (`.dev.vars`). **Nenhuma delas entra no
+repositório.**
 
 ---
 
@@ -307,21 +340,17 @@ sem o fluxo interativo.
 
 ## Antes de zipar
 
-Estas pastas somam mais de 3 GB e se regeneram sozinhas:
+O pacote sai do próprio repositório, então leva só o que está versionado —
+sem `.env`, chaves, token, `node_modules`, ambientes Python, PDFs nem listas
+locais:
 
 ```bash
 cd ~/Área\ de\ trabalho/orbis-web
-rm -rf .sites-runtime node_modules dist .wrangler tsconfig.tsbuildinfo
-rm -rf motor/.venv servico-python/.venv motor/.env
-find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
-
-cd .. && zip -qr orbis-web.zip orbis-web
+git archive --format=zip --prefix=orbis-web/ -o ~/Área\ de\ trabalho/orbis-web.zip HEAD
 ```
 
-Sem elas, o projeto fica em **5,6 MB**.
-
-A `.sites-runtime` (1,3 GB) é criada pelo `pnpm dev` e é a maior de todas —
-não esqueça dela.
+Confira antes que o trabalho está commitado (`git status`): o que não estiver
+no último commit não entra.
 
 ---
 
