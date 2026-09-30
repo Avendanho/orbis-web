@@ -213,12 +213,15 @@ mesmo nome gerado se sobrescrevam. Detalhes e medições em
 
 ### Extração (`servico-python/extracao.py`)
 
-- `pymupdf4llm.to_markdown` roda num **processo filho** com prazo
-  (`ORBIS_EXTRACAO_PRAZO`, padrão 90 s): só um processo à parte pode ser
-  interrompido.
-- No modo "baixar", o filho trabalha na pasta do projeto e grava as imagens
-  em `<nome>_imagens/` com links relativos; no modo "analisar" não recebe
-  pasta e nada fica no disco.
+- `pymupdf4llm.to_markdown` roda em **processos à parte** com prazo
+  (`ORBIS_EXTRACAO_PRAZO`, padrão 90 s): só um processo pode ser
+  interrompido. Os processos (`Trabalhadores`, `spawn`, até 4 — o mesmo
+  limite de downloads simultâneos) ficam vivos entre um artigo e outro,
+  porque importar o `pymupdf4llm` custa mais que extrair; o que estoura o
+  prazo ou cai é morto e substituído no próximo artigo.
+- No modo "baixar", o processo trabalha na pasta do projeto e grava as
+  imagens em `<nome>_imagens/` com links relativos; no modo "analisar" não
+  recebe pasta e nada fica no disco.
 - Falha ou prazo estourado: texto simples do PyMuPDF, `formato: 'texto'` e
   `aviso_extracao`; a pasta de imagens pela metade é apagada.
 - O texto enviado ao ORBIS é cortado em `LIMITE_TEXTO` (com
@@ -259,7 +262,9 @@ mesmo nome gerado se sobrescrevam. Detalhes e medições em
   `settings` (migração não aplicada), vale o ambiente.
 - Itens do motor vão por `PUT /config` ao servico-python, que grava o
   `motor/.env` preservando comentários e ordem (substitui a linha, descomenta
-  a do modelo ou acrescenta no fim) e atualiza `os.environ`.
+  a do modelo ou acrescenta no fim) e atualiza `os.environ`. A cópia nova
+  herda a permissão do arquivo (um `chmod 600` continua valendo); um
+  `.env` criado pela tela nasce `600`.
   `config_env.PERMITIDAS` e o catálogo são conferidos por teste de paridade.
 - Booleanos ligados por padrão gravam `0` ao desligar; os desligados por
   padrão (`PAPER_FETCH_NO_*`) são apagados.

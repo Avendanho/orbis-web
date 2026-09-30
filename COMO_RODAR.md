@@ -302,7 +302,7 @@ for t in tests/*.mjs; do node "$t"; done
 # verificação de tipos
 pnpm exec tsc --noEmit
 
-# motor — 336 testes (e 67 no servico-python)
+# motor — 336 testes (e 73 no servico-python)
 cd motor && .venv/bin/python -m pytest -q
 ```
 

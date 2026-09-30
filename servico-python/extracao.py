@@ -1,23 +1,23 @@
 """Texto de um PDF em Markdown (``pymupdf4llm``), com prazo e plano B.
 
 O Markdown preserva seções, títulos e tabelas, que o texto simples achata — e
-é isso que a IA lê na análise PCC. O ``pymupdf4llm`` roda num processo filho:
-num PDF patológico ele pode levar minutos, e só um processo à parte pode ser
-interrompido no prazo. Se falhar ou estourar, vale o texto simples do PyMuPDF,
-como antes: o artigo entra assim mesmo.
+é isso que a IA lê na análise PCC. O ``pymupdf4llm`` roda em processos à
+parte: num PDF patológico ele pode levar minutos, e só um processo pode ser
+interrompido no prazo. Os processos ficam vivos entre um artigo e outro —
+importar o ``pymupdf4llm`` (e o modelo de layout) custa mais que extrair um
+artigo — e o que estoura o prazo é morto e substituído. Se falhar ou estourar,
+vale o texto simples do PyMuPDF, como antes: o artigo entra assim mesmo.
 
 As imagens (quando há pasta para elas) ficam em ``<nome>_imagens/``, ao lado
 do ``.md``, e os links no Markdown são relativos a ele.
-
-    python extracao.py <pdf> [<pasta_imagens>]   (uso interno: é o processo filho)
 """
 from __future__ import annotations
 
+import multiprocessing
 import os
 import shutil
-import subprocess
-import sys
 import tempfile
+import threading
 from pathlib import Path
 
 PRAZO_PADRAO = 90
@@ -55,27 +55,108 @@ def texto_simples(caminho: Path) -> tuple[str, int]:
         doc.close()
 
 
-def markdown_no_filho(caminho: Path, pasta_imagens: Path | None, prazo: int, comando: list[str] | None = None) -> str:
-    """Roda este arquivo como processo filho; ``subprocess`` o mata no prazo."""
-    cmd = comando or [sys.executable, str(Path(__file__).resolve()), str(Path(caminho).resolve()),
-                      *([pasta_imagens.name] if pasta_imagens else [])]
-    with tempfile.TemporaryDirectory(prefix="orbis-md-") as vazio:
-        # O filho grava as imagens relativas à pasta de trabalho: é assim que os
-        # links saem relativos. Sem pasta de imagens, trabalha numa pasta vazia.
-        cwd = pasta_imagens.parent if pasta_imagens else vazio
+def _servir(conn) -> None:
+    """Processo de extração: importa o pymupdf4llm uma vez e atende um artigo por vez."""
+    import pymupdf4llm
+
+    while True:
         try:
-            r = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=prazo,
-                               env={**os.environ, "PYTHONUTF8": "1"})
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(prazo) from exc
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr.decode("utf-8", "replace")[-500:] or f"código {r.returncode}")
-    return r.stdout.decode("utf-8", "replace")
+            pedido = conn.recv()
+        except EOFError:
+            return
+        if pedido is None:
+            return
+        pdf, cwd, imagens = pedido
+        try:
+            # As imagens são gravadas relativas à pasta de trabalho: é assim que
+            # os links no Markdown saem relativos ao .md.
+            os.chdir(cwd)
+            md = pymupdf4llm.to_markdown(pdf, write_images=bool(imagens), image_path=imagens,
+                                         image_format="png", show_progress=False)
+            conn.send((True, md))
+        except Exception as exc:
+            conn.send((False, f"{type(exc).__name__}: {exc}"[:500]))
+
+
+class Trabalhadores:
+    """Processos de extração reaproveitados, no máximo ``maximo`` ao mesmo tempo.
+
+    ``spawn`` e não ``fork``: o motor roda dentro do uvicorn, com threads, e um
+    fork copiaria travas no meio do uso. É também o que o Windows e o macOS usam.
+    """
+
+    def __init__(self, maximo: int = 4):
+        self._ctx = multiprocessing.get_context("spawn")
+        self._vagas = threading.BoundedSemaphore(maximo)
+        self._trava = threading.Lock()
+        self._livres: list = []
+        self._vivos: set = set()
+
+    def pids(self) -> list[int]:
+        with self._trava:
+            return sorted(p.pid for p, _ in self._vivos if p.is_alive())
+
+    def _pegar(self):
+        with self._trava:
+            while self._livres:
+                t = self._livres.pop()
+                if t[0].is_alive():
+                    return t
+                self._vivos.discard(t)
+        pai, filho = self._ctx.Pipe()
+        proc = self._ctx.Process(target=_servir, args=(filho,), daemon=True, name="orbis-extracao")
+        proc.start()
+        filho.close()
+        with self._trava:
+            self._vivos.add((proc, pai))
+        return proc, pai
+
+    def _matar(self, t) -> None:
+        proc, conn = t
+        # Morto e esperado antes de seguir: nada mais é gravado na pasta de
+        # imagens depois que ela for apagada.
+        proc.kill()
+        proc.join(10)
+        conn.close()
+        with self._trava:
+            self._vivos.discard(t)
+
+    def markdown(self, caminho: Path, pasta_imagens: Path | None, prazo: float) -> str:
+        with self._vagas:
+            t = self._pegar()
+            try:
+                t[1].send((str(Path(caminho).resolve()),
+                           str(pasta_imagens.parent) if pasta_imagens else tempfile.gettempdir(),
+                           pasta_imagens.name if pasta_imagens else ""))
+                if not t[1].poll(prazo):
+                    raise TimeoutError(prazo)
+                ok, valor = t[1].recv()
+            except BaseException:
+                # Prazo estourado, processo que caiu ou pedido interrompido: esse
+                # processo não atende mais ninguém.
+                self._matar(t)
+                raise
+            with self._trava:
+                self._livres.append(t)
+        if not ok:
+            raise RuntimeError(valor)
+        return valor
+
+    def encerrar(self) -> None:
+        with self._trava:
+            todos, self._livres = list(self._vivos), []
+        for t in todos:
+            self._matar(t)
+
+
+# Tantos quanto os downloads simultâneos do motor (main.py).
+TRABALHADORES = Trabalhadores(maximo=4)
 
 
 def extrair(caminho: Path, pasta_imagens: Path | None = None, *, markdown: bool = True,
-            prazo: int = PRAZO_PADRAO, rodar=markdown_no_filho) -> dict:
+            prazo: float = PRAZO_PADRAO, rodar=None) -> dict:
     caminho = Path(caminho)
+    rodar = rodar or TRABALHADORES.markdown
     if pasta_imagens:
         # Baixar de novo o mesmo artigo substitui as imagens, não acumula.
         shutil.rmtree(pasta_imagens, ignore_errors=True)
@@ -120,11 +201,3 @@ def _contar(pasta: Path | None) -> int:
         pasta.rmdir()
     return n
 
-
-if __name__ == "__main__":
-    import pymupdf4llm
-
-    pdf, *resto = sys.argv[1:]
-    md = pymupdf4llm.to_markdown(pdf, write_images=bool(resto), image_path=resto[0] if resto else "",
-                                 image_format="png", show_progress=False)
-    sys.stdout.buffer.write(md.encode("utf-8"))

@@ -1,4 +1,8 @@
+import os
+import signal
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -63,16 +67,64 @@ def test_falha_do_markdown_cai_para_texto_simples(tmp_path):
     assert not (tmp_path / "artigo_imagens").exists()
 
 
-def test_prazo_estourado_mata_o_filho_e_cai_para_texto_simples(tmp_path):
-    imagens = tmp_path / "artigo_imagens"
-    dorme = [sys.executable, "-c", "import os,time;os.makedirs('artigo_imagens');time.sleep(30)"]
+def test_o_processo_de_extracao_e_reaproveitado(tmp_path):
+    # Importar o pymupdf4llm custa mais que extrair um artigo: um processo por
+    # artigo pagava isso a cada PDF.
+    pool = extracao.Trabalhadores(maximo=2)
+    try:
+        a = extracao.extrair(pdf(tmp_path), tmp_path / "artigo_imagens", rodar=pool.markdown)
+        pids = pool.pids()
+        b = extracao.extrair(pdf(tmp_path), None, rodar=pool.markdown)
+        assert a["formato"] == b["formato"] == "markdown" and a["imagens"] == 1
+        assert len(pids) == 1 and pids[0] != os.getpid(), "extração fora do processo do motor"
+        assert pool.pids() == pids, "o mesmo processo atende o segundo artigo"
+    finally:
+        pool.encerrar()
 
-    def lento(caminho, pasta, prazo):
-        return extracao.markdown_no_filho(caminho, pasta, prazo, comando=dorme)
-    r = extracao.extrair(pdf(tmp_path), imagens, prazo=1, rodar=lento)
-    assert r["formato"] == "texto" and TITULO in r["texto"]
-    assert r["aviso"] == "A extração em Markdown passou de 1 s; foi usado o texto simples."
-    assert not imagens.exists(), "pasta de imagens pela metade é apagada"
+
+def test_prazo_estourado_mata_o_trabalhador_e_cai_para_texto_simples(tmp_path):
+    pool = extracao.Trabalhadores(maximo=1)
+    imagens = tmp_path / "artigo_imagens"
+    try:
+        # 10 ms não dá nem para o processo subir: o prazo estoura de verdade.
+        r = extracao.extrair(pdf(tmp_path), imagens, prazo=0.01, rodar=pool.markdown)
+        assert r["formato"] == "texto" and TITULO in r["texto"]
+        assert "passou de 0.01 s" in r["aviso"]
+        assert not imagens.exists(), "pasta de imagens pela metade é apagada"
+        assert pool.pids() == [], "o processo que estourou o prazo foi morto"
+        r = extracao.extrair(pdf(tmp_path), imagens, rodar=pool.markdown)
+        assert r["formato"] == "markdown", "o próximo artigo sobe um processo novo"
+    finally:
+        pool.encerrar()
+
+
+def test_processo_que_caiu_e_substituido(tmp_path):
+    pool = extracao.Trabalhadores(maximo=1)
+    try:
+        extracao.extrair(pdf(tmp_path), None, rodar=pool.markdown)
+        os.kill(pool.pids()[0], signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)
+        time.sleep(0.5)
+        r = extracao.extrair(pdf(tmp_path), None, rodar=pool.markdown)
+        assert r["formato"] == "markdown" and "aviso" not in r
+    finally:
+        pool.encerrar()
+
+
+def test_artigos_em_paralelo_respeitam_o_maximo(tmp_path):
+    pool = extracao.Trabalhadores(maximo=2)
+    caminhos = []
+    for i in range(4):
+        d = tmp_path / str(i)
+        d.mkdir()
+        caminhos.append(pdf(d))
+    try:
+        with ThreadPoolExecutor(4) as ex:
+            rs = list(ex.map(lambda c: extracao.extrair(c, c.parent / "artigo_imagens", rodar=pool.markdown), caminhos))
+        assert all(r["formato"] == "markdown" and r["imagens"] == 1 for r in rs)
+        assert all((c.parent / "artigo_imagens").is_dir() for c in caminhos), "cada artigo nas suas imagens"
+        assert 1 <= len(pool.pids()) <= 2
+    finally:
+        pool.encerrar()
 
 
 def test_markdown_desligado_nem_chama_o_filho(tmp_path):
