@@ -61,10 +61,11 @@ await assert.rejects(
 // ---------------------------------------------------------------------------
 // Provedor: sem chave, não há triagem automática
 // ---------------------------------------------------------------------------
-assert.equal(prov.pickProvider({}),null,'sem chave nenhuma, a triagem automática não é oferecida');
-assert.equal(prov.pickProvider({OPENAI_API_KEY:'k'}).name,'OpenAI');
-assert.equal(prov.pickProvider({GEMINI_API_KEY:'k'}).name,'Google');
-assert.equal(prov.pickProvider({ANTHROPIC_API_KEY:'k',OPENAI_API_KEY:'k'}).name,'Anthropic','há ordem de preferência');
+const semOllama={online:async()=>false};
+assert.equal(await prov.pickProvider({},semOllama),null,'sem chave nenhuma, a triagem automática não é oferecida');
+assert.equal((await prov.pickProvider({OPENAI_API_KEY:'k'},semOllama)).name,'OpenAI');
+assert.equal((await prov.pickProvider({GEMINI_API_KEY:'k'},semOllama)).name,'Google');
+assert.equal((await prov.pickProvider({ANTHROPIC_API_KEY:'k',OPENAI_API_KEY:'k'},semOllama)).name,'Anthropic','há ordem de preferência');
 
 // ---------------------------------------------------------------------------
 // runAITriage — o ponto do desenho: a saída tem de passar por `importAI`
@@ -168,5 +169,41 @@ console.log('ai-runner: ok');
  assert.ok(lotes.flat().every(i=>!('texto_completo' in i)));
 
  assert.match(ai.makeAIPackage(project,'pcc').instrucoes,/texto_completo/);
+
+ // Modelo local: o texto cabe no contexto dele e vai um artigo por chamada.
+ lotes.length=0;
+ await runner.runAITriage(project,'pcc',{...provider,local:true,limiteTexto:100},{readText:async k=>textos[k]??null});
+ assert.deepEqual(lotes.map(l=>l.length),[1,1,1],'PCC local, um artigo por chamada');
+ assert.equal(item('b').texto_completo.length,100);assert.equal(item('b').texto_truncado,true);
+ assert.equal(item('a').texto_completo,'curto');assert.equal(item('a').texto_truncado,false);
 }
 console.log('ai-runner (texto completo): ok');
+
+// ---------------------------------------------------------------------------
+// Lotes controlados pela tela: `limit` escolhe os pendentes, `remaining` diz
+// quantos faltam. Pendente = sem análise atual DESTE provedor e modelo.
+// ---------------------------------------------------------------------------
+{
+ const p=novoProjeto();let vistos=[];
+ const iaA=fake(pk=>{vistos.push(...pk.artigos.map(a=>a.article_id));return JSON.stringify({items:pk.artigos.map(a=>({...a,triagem_nivel1:[{pergunta:1,resposta:'sim',motivo:'ok'},{pergunta:2,resposta:'sim',motivo:'ok'}]}))})});
+ let s=await runner.runAITriage(p,'triagem',iaA,{limit:1});
+ assert.equal(s.analysed,1);assert.equal(s.remaining,1,'um ficou para o próximo lote');
+ ai.importAI(p.state,'p1',s.response,'triagem');
+ s=await runner.runAITriage(p,'triagem',iaA,{limit:1});
+ assert.equal(s.analysed,1);assert.equal(s.remaining,0);
+ assert.deepEqual(vistos,['a1','a2'],'o segundo lote pega o que faltava, sem repetir');
+ ai.importAI(p.state,'p1',s.response,'triagem');
+ vistos=[];
+ s=await runner.runAITriage(p,'triagem',iaA,{limit:10});
+ assert.equal(s.response,null);assert.equal(s.analysed,0);assert.equal(s.remaining,0);assert.deepEqual(vistos,[],'nada pendente: nenhuma chamada');
+ s=await runner.runAITriage(p,'triagem',{...iaA,model:'m2'},{limit:10});
+ assert.equal(s.analysed,2,'análise de outro modelo não conta como feita');
+ s=await runner.runAITriage(p,'triagem',iaA);
+ assert.equal(s.analysed,2,'sem limit, como antes: todos');assert.equal(s.remaining,0);
+
+ assert.equal(runner.tamanhoLote(undefined,undefined),10);
+ assert.equal(runner.tamanhoLote('3','20'),3,'o pedido da tela vale');
+ assert.equal(runner.tamanhoLote(undefined,'20'),20,'senão, o configurado');
+ assert.equal(runner.tamanhoLote(999,undefined),50);assert.equal(runner.tamanhoLote(0,'abc'),10);
+}
+console.log('ai-runner (lotes): ok');

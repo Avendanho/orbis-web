@@ -9,7 +9,7 @@
 //
 // Nada aqui decide nada. O resultado é rascunho, como o importado: quem aplica
 // é o pesquisador (regra 2 do projeto).
-import {makeAIPackage,parseAI,normalizeAIResponse,type AIStage} from './ai-analysis';
+import {makeAIPackage,parseAI,normalizeAIResponse,analysesFor,isCurrent,type AIStage} from './ai-analysis';
 import {callWithRetry,LlmCallFailed,type Provider} from './ai-provider';
 
 export const SYSTEM_PROMPT=
@@ -31,14 +31,22 @@ export const BATCH_SIZE=5;
 export const PCC_BATCH_SIZE=2;
 export const TEXT_LIMIT=60000;
 
+// Quantos itens por requisição quando a tela repete a execução em lotes: o
+// pedido da tela, senão o configurado (ORBIS_IA_LOTE), senão 10.
+export function tamanhoLote(pedido:any,configurado:any):number{
+ for(const v of [pedido,configurado]){const n=Math.floor(Number(v));if(Number.isFinite(n)&&n>=1)return Math.min(50,n);}
+ return 10;
+}
+
 // Anexa o texto extraído pelo motor aos itens da PCC. Texto que não pôde ser
 // lido deixa o item como está: a IA responde null, como já faz sem PDF.
-export async function withFullText(project:any,items:any[],readText:(key:string)=>Promise<string|null>){
+export async function withFullText(project:any,items:any[],readText:(key:string)=>Promise<string|null>,limite=TEXT_LIMIT){
+ limite=Math.min(TEXT_LIMIT,limite);
  const out:any[]=[];
  for(const item of items){
   const a=project.state.articles.find((x:any)=>x.id===item.article_id);
   const t=a?.texto?.key?await readText(a.texto.key).catch(()=>null):null;
-  out.push(t?{...item,texto_completo:t.slice(0,TEXT_LIMIT),texto_truncado:t.length>TEXT_LIMIT||!!a.texto.truncado}:item);
+  out.push(t?{...item,texto_completo:t.slice(0,limite),texto_truncado:t.length>limite||!!a.texto.truncado}:item);
  }
  return out;
 }
@@ -62,17 +70,30 @@ export type RunOutcome={
  response:any|null;          // pronto para `importAI`
  analysed:number;
  failures:{articles:string[];reason:string}[];
+ remaining:number;           // pendentes que ficaram para o próximo lote
 };
 
 // Roda a triagem sobre os artigos do pacote e devolve UMA resposta agregada,
 // no formato que `importAI` consome.
-export async function runAITriage(project:any,stage:AIStage,provider:Provider,opts:{batchSize?:number;onProgress?:(done:number,total:number)=>void;readText?:(key:string)=>Promise<string|null>}={}):Promise<RunOutcome>{
+//
+// Com `limit`, analisa só os pendentes — artigos sem análise atual deste
+// provedor e modelo —, no máximo `limit`, e diz quantos faltam: a tela repete
+// a chamada com progresso e pode pausar entre um lote e outro.
+export async function runAITriage(project:any,stage:AIStage,provider:Provider,opts:{batchSize?:number;limit?:number;onProgress?:(done:number,total:number)=>void;readText?:(key:string)=>Promise<string|null>}={}):Promise<RunOutcome>{
  const pkg=makeAIPackage(project,stage);
- const base:any[]=Array.isArray(pkg.items)?pkg.items:[];
- const itens=stage==='pcc'&&opts.readText?await withFullText(project,base,opts.readText):base;
- if(!itens.length)return {response:null,analysed:0,failures:[]};
+ let base:any[]=Array.isArray(pkg.items)?pkg.items:[],remaining=0;
+ if(opts.limit!=null){
+  const protocol=project.state.protocol;
+  const feito=(id:string)=>{const a=project.state.articles.find((x:any)=>x.id===id);
+   return !!a&&analysesFor(a,stage).some(x=>x.provider===provider.name&&x.model===provider.model&&isCurrent(x,a,protocol))};
+  const pendentes=base.filter(i=>!feito(i.article_id));
+  base=pendentes.slice(0,Math.max(1,Math.floor(opts.limit)));remaining=pendentes.length-base.length;
+ }
+ const itens=stage==='pcc'&&opts.readText?await withFullText(project,base,opts.readText,provider.limiteTexto):base;
+ if(!itens.length)return {response:null,analysed:0,failures:[],remaining};
 
- const lotes=chunk(itens,opts.batchSize??(stage==='pcc'?PCC_BATCH_SIZE:BATCH_SIZE));
+ // Modelo local tem contexto curto: na PCC, um texto completo por chamada.
+ const lotes=chunk(itens,opts.batchSize??(stage==='pcc'?(provider.local?1:PCC_BATCH_SIZE):BATCH_SIZE));
  const recebidos:any[]=[];
  const failures:RunOutcome['failures']=[];
  let feitos=0;
@@ -98,11 +119,12 @@ export async function runAITriage(project:any,stage:AIStage,provider:Provider,op
   opts.onProgress?.(feitos,itens.length);
  }
 
- if(!recebidos.length)return {response:null,analysed:0,failures};
+ if(!recebidos.length)return {response:null,analysed:0,failures,remaining};
 
  return {
   response:{...pkg.formato_resposta,provider:provider.name,model:provider.model,items:recebidos},
   analysed:recebidos.length,
   failures,
+  remaining,
  };
 }

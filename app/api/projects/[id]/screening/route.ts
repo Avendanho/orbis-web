@@ -1,14 +1,15 @@
 import {identity,owned,database,body,ok,fail,ApiError,requireRole} from '@/lib/server';
 import {resolveArticle} from '@/lib/article-resolver';
 import {pickProvider,callWithRetry,LlmCallFailed} from '@/lib/ai-provider';
-import {SYSTEM_PROMPT,buildUserPrompt,chunk} from '@/lib/ai-runner';
+import {SYSTEM_PROMPT,buildUserPrompt,chunk,tamanhoLote} from '@/lib/ai-runner';
+import {iaValores} from '@/lib/ai-env';
 import {parseAI,normalizeAIResponse} from '@/lib/ai-analysis';
 import {registroDe,situacao,decidir,pacoteIA,sugestaoDe,sugestaoAtual,aceitar,type Registro} from '@/lib/screening';
 import {linhasDoProjeto,linhaDe,gravarDecisao,gravarSugestao} from '@/lib/screening-db';
 
 // Triagem de títulos e resumos antes do download. A leitura vem no GET do
 // projeto (`screening`); aqui ficam só as ações que gravam.
-const MAX_ACEITAR=500,MAX_LOTE_IA=50,GRUPO_IA=5;
+const MAX_ACEITAR=500,GRUPO_IA=5;
 const lerLinha=(r:any)=>r?{...r,result:r.result?JSON.parse(r.result):null}:null;
 
 async function registro(db:any,project:string,doi:string):Promise<Registro>{
@@ -51,9 +52,9 @@ export async function POST(r:Request,{params}:any){try{
  if(b.action==='ai'){
   requireRole(p,['owner','editor']);
   if(!protocolo.approved)throw new ApiError(400,'Aprove o protocolo antes da triagem.');
-  const provider=pickProvider(globalThis as any);
-  if(!provider)throw new ApiError(400,'Nenhum provedor de IA está configurado. Configure um em Configurações ou use a triagem manual.');
-  const limite=Math.min(MAX_LOTE_IA,Math.max(1,Math.floor(Number(b.limit)||10)));
+  const v=iaValores(),provider=await pickProvider(v);
+  if(!provider)throw new ApiError(400,'Nenhum provedor de IA disponível: o Ollama local não respondeu e não há chave de nuvem configurada. Configure um em Configurações ou use a triagem manual.');
+  const limite=tamanhoLote(b.limit,v.ORBIS_IA_LOTE);
   const linhas=new Map((await linhasDoProjeto(db,id)).map(l=>[l.doi,l]));
   const rows=(await db.prepare("SELECT doi,status,result FROM search_items WHERE project=? AND status IN ('done','partial') ORDER BY updated").bind(id).all()).results||[];
   const pendentes=(rows.map(lerLinha).map(registroDe).filter(Boolean) as Registro[])

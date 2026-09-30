@@ -47,7 +47,7 @@ export default function ScreeningPanel({project,busy,running,refresh,baixarInclu
   if(bloqueado)return;setIa(true);parar.current=false;let feitos=0;
   try{
    while(!parar.current){
-    const r=await api(base,{action:'ai',limit:10});feitos+=r.analysed;
+    const r=await api(base,{action:'ai'});feitos+=r.analysed;
     setProgresso(feitos+' registro(s) com sugestão · '+r.remaining+' na fila · '+r.provider+(r.model?' / '+r.model:''));
     if(r.failures?.length)toast.warning(r.failures.map((f:any)=>f.reason).join(' | ').slice(0,500));
     await refresh();

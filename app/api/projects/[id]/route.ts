@@ -3,7 +3,8 @@ import {incorporateWithPdf} from '@/lib/incorporate-pdf';
 import {resolveArticle} from '@/lib/article-resolver';
 import {extractPdfDetails} from '@/lib/pdf-abstract';
 import {importAI,removeAI,stageName,analysesFor,isCurrent} from '@/lib/ai-analysis';
-import {runAITriage} from '@/lib/ai-runner';
+import {runAITriage,tamanhoLote} from '@/lib/ai-runner';
+import {iaValores} from '@/lib/ai-env';
 import {isMode,textKey,orphanTexts,ownKey} from '@/lib/motor-download';
 import {pickProvider} from '@/lib/ai-provider';
 import {restoredState} from '@/lib/validation';
@@ -42,13 +43,16 @@ if(b.action==='renameProject'){
  // decisão humana é criada nem sobrescrita aqui (regra 2 do projeto).
  requireRole(p,['owner','editor']);
  const stage=stageName(b.stage)||'triagem';
- const provider=pickProvider(globalThis as any);
- if(!provider)throw new ApiError(400,'Nenhuma chave de provedor de IA está configurada neste ambiente. Use a importação manual.');
- let saida;try{saida=await runAITriage({...p,state:s},stage,provider,{batchSize:Number(b.batchSize)||undefined,readText:async(key:string)=>{if(!ownKey(id,key))return null;const o=await bucket().get(key);return o?await o.text():null}})}catch(e:any){throw new ApiError(502,e.message)}
+ const v=iaValores(),provider=await pickProvider(v);
+ if(!provider)throw new ApiError(400,'Nenhum provedor de IA disponível: o Ollama local não respondeu e não há chave de nuvem configurada. Use a importação manual.');
+ // Um lote por requisição: a tela repete enquanto houver pendentes (`remaining`).
+ let saida;try{saida=await runAITriage({...p,state:s},stage,provider,{batchSize:Number(b.batchSize)||undefined,limit:tamanhoLote(b.limit,v.ORBIS_IA_LOTE),readText:async(key:string)=>{if(!ownKey(id,key))return null;const o=await bucket().get(key);return o?await o.text():null}})}catch(e:any){throw new ApiError(502,e.message)}
+ const resumo={provider:provider.name,model:provider.model,analysed:saida.analysed,failures:saida.failures,remaining:saida.remaining};
+ if(!saida.response&&!saida.failures.length)return ok({ai:resumo});
  if(!saida.response)throw new ApiError(502,saida.failures[0]?.reason||'A IA não devolveu nenhuma avaliação.');
  let report;try{report=importAI(s,id,saida.response,stage,{})}catch(e:any){throw new ApiError(400,e.message)}
  return ok({...await commit(p,actor,s,'importAI'),aiReport:report,
-  ai:{provider:provider.name,model:provider.model,analysed:saida.analysed,failures:saida.failures}});
+  ai:resumo});
 }else if(b.action==='importAI'){
  const stage=stageName(b.stage);if(!stage)throw new ApiError(400,'Etapa de IA inválida.');let report;try{report=importAI(s,id,b.response,stage,b.mappings||{})}catch(e:any){throw new ApiError(400,e.message)}return ok({...await commit(p,actor,s,b.action),aiReport:report});
 }else if(b.action==='removeAI'){
