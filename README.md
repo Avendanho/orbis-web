@@ -63,6 +63,7 @@ cd servico-python && .venv/bin/python -m pytest -q
 - [COMO_RODAR.md](COMO_RODAR.md) — instalação, variáveis, testes, solução de problemas
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — o que a interface faz e seus limites conhecidos
 - [motor/README.md](motor/README.md) — o motor Python
+- [motor/ANALISE.md](motor/ANALISE.md) — por que a recuperação de PDFs fica em ~50% e o que a leva adiante (acesso CAPES/CAFe)
 - [docs/hospedagem-sites.md](docs/hospedagem-sites.md) — ciclo de vida na hospedagem Sites
 - [docs/planos/](docs/planos/) — seção de Configurações (planejada, ainda não implementada)
 

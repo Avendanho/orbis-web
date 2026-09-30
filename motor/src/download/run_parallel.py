@@ -37,6 +37,13 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+if __name__ == "__main__":
+    # Pela linha de comando, as chaves de motor/.env valem como no serviço. Tem
+    # de ser antes do import: fetch lê o e-mail e as chaves ao ser importado.
+    import ambiente
+
+    ambiente.carregar()
+
 import fetch as fetch_module
 from bypass403 import validate_pdf_data
 from fetch import (
@@ -160,6 +167,7 @@ SOURCE_NAMES = {
     "core": "CORE",
     "pmc_s3": "PMC (AWS)",
     "pmc_s3_xml": "PMC XML (AWS)",
+    "sessao_institucional": "Sessão institucional (CAPES/EZproxy)",
 }
 
 

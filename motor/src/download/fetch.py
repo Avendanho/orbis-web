@@ -42,7 +42,7 @@ import sys
 import typing
 import time
 import threading
-from pdf_links import extract_pdf_links
+from pdf_links import extract_pdf_links, is_supplementary_url
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +57,7 @@ import institutional
 import fulltext_xml
 import browser_fetch
 import pmc_s3
+import sessao_navegador
 # ---------------------------------------------------------------------------
 # Sci-Hub circuit breaker and timeout
 # ---------------------------------------------------------------------------
@@ -72,6 +73,13 @@ SCHEMA_VERSION = "1.12.0"
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Direct CLI use: motor/.env applies here as it does in the service. Only
+    # for the script, so tests importing this module never see local keys.
+    import ambiente
+
+    ambiente.carregar()
 
 EMAIL = os.environ.get("UNPAYWALL_EMAIL", "").strip()
 CORE_API_KEY = os.environ.get("CORE_API_KEY", "").strip()
@@ -753,6 +761,7 @@ def _get(url: str, *, accept: str = "application/json", timeout: int, user_agent
     req = urllib.request.Request(url, headers=headers)
     last_err = None
     for attempt in range(http_retry.DEFAULT_ATTEMPTS):
+        http_retry.pace(url, max_wait=_time_left())
         try:
             with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as r:
                 data = r.read()
@@ -2077,6 +2086,11 @@ def fetch(
         """
         if not cand_url or cand_url in attempted_urls:
             return None, False
+        if is_supplementary_url(cand_url):
+            # An index pointing at the supplement (S2 does, now and then): the
+            # identity gate would reject it after a full download.
+            _progress("candidate_skip", doi=doi, source=cand_src, url=cand_url, reason="supplementary_material")
+            return None, False
         # Hard per-article budget: once it is gone, abort the whole item
         # (fatal) so the cascade stops between candidates instead of walking
         # every remaining source and mirror.
@@ -2516,6 +2530,67 @@ def fetch(
             _progress("source_skip", doi=doi, source="core", reason="PAPER_FETCH_SKIP_CORE=1")
 
     # -----------------------------------------------------------------------
+    # 7b. Institutional session in the researcher's own browser (CAPES/CAFe
+    #     or the library EZproxy) — see sessao_navegador.py.
+    #
+    # After the open sources, which cost the institution nothing, and before
+    # everything slower: for a subscription article this is the one legal
+    # route left, and every second spent before it comes out of its budget.
+    # -----------------------------------------------------------------------
+    def _try_sessao() -> tuple[typing.Any, bool]:
+        src = "sessao_institucional"
+        left = _time_left()
+        budget = max(MIN_SOURCE_SECONDS, (left if left is not None else 2 * timeout) - 2)
+        started = time.monotonic()
+        data, err = sessao_navegador.baixar_pdf(doi, prazo=budget)
+        elapsed = (time.monotonic() - started) * 1000
+        if data:
+            valid, data, err = validate_pdf_data(data)
+            if not valid:
+                data = None
+        if not data:
+            _stats_record(src, ms=elapsed, ok=False, error=err)
+            download_errors.append({"source": src, "url": None, "reason": err or "sem_pdf"})
+            _progress("source_miss", doi=doi, source=src, reason=err)
+            return None, False
+
+        dest = out_dir / _filename(meta or {"title": doi})
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp_dest = dest.with_name(f".{dest.name}.tmp.{os.getpid()}_{uuid.uuid4().hex[:6]}")
+            tmp_dest.write_bytes(data)
+            tmp_dest.replace(dest)
+        except OSError as exc:
+            _progress("download_error", reason="io_error", error=str(exc))
+            download_errors.append({"source": src, "url": None, "reason": "io_error"})
+            return _download_failure(doi, meta, sources_tried, download_errors, candidates=candidates), True
+
+        # The page was reached by resolving this very DOI, so the record link
+        # is authoritative; the PDF itself still has to agree with it.
+        verdict = _validate_downloaded_file(dest, expected=_expected_identity(doi, meta), record_doi_matched=True)
+        _progress(
+            "validation_result", doi=doi, source=src,
+            result="CONFIRMED" if verdict["identity_validated"] else "REJECTED",
+            method=verdict["validation_method"], expected_doi=doi, detected_doi=verdict.get("detected_doi"),
+        )
+        if not verdict["identity_validated"]:
+            _stats_record(src, ms=elapsed, ok=False, error="identity_rejected")
+            identity_rejections.append({"source": src, "url": None, **verdict})
+            dest.unlink(missing_ok=True)
+            return None, False
+        _write_identity_sidecar(dest, verdict)
+        _stats_record(src, ms=elapsed, ok=True)
+        _progress("download_ok", doi=doi, file=str(dest), source=src)
+        return _success(src, None, _identity_extra(verdict)), False
+
+    if sessao_navegador.disponivel() and _can_try("sessao_institucional") and not dry_run:
+        sources_tried.append("sessao_institucional")
+        _progress("source_try", doi=doi, source="sessao_institucional")
+        _sessao_res, _sessao_fatal = _try_sessao()
+        if _sessao_res is not None or _sessao_fatal:
+            return _sessao_res
+
+    # -----------------------------------------------------------------------
     # 8. Libgen (Library Genesis)
     # -----------------------------------------------------------------------
     if _is_libgen_enabled() and _can_try("libgen"):
@@ -2567,7 +2642,9 @@ def fetch(
     # -----------------------------------------------------------------------
     els_key = os.environ.get("ELSEVIER_API_KEY", "").strip()
     # MDPI and PLOS are fully open access, so their direct routes need no institutional mode.
-    if (_is_institutional() or (els_key and doi.startswith("10.1016/")) or doi.startswith(("10.3390/", "10.1371/", "10.3389/", "10.7717/", "10.1145/", "10.1186/"))) and _can_try("publisher_direct"):
+    # A configured EZproxy/campus proxy is institutional access by itself: without
+    # these publisher URLs it would have nothing to rewrite for a closed article.
+    if (_is_institutional() or institutional.is_configured() or (els_key and doi.startswith("10.1016/")) or doi.startswith(("10.3390/", "10.1371/", "10.3389/", "10.7717/", "10.1145/", "10.1186/"))) and _can_try("publisher_direct"):
         _progress("source_try", doi=doi, source="publisher_direct")
         pub_candidates = _try_publisher_direct(doi, timeout=timeout)
         if pub_candidates:
@@ -3598,8 +3675,13 @@ def _fetch_from_expanded_sources(
     overwrite: bool,
     timeout: int,
     original_result: dict,
+    sources: list[str] | None = None,
 ) -> dict:
-    """Search additional legitimate metadata/repository sources concurrently."""
+    """Search additional legitimate metadata/repository sources concurrently.
+
+    ``sources`` is the caller's allowlist: a resolver it does not name is not
+    run, exactly as in the main cascade.
+    """
     if dry_run:
         original_result.setdefault("expanded_discovery", {})
         original_result["expanded_discovery"]["status"] = "skipped_for_dry_run"
@@ -3623,6 +3705,9 @@ def _fetch_from_expanded_sources(
         ("fatcat", lambda: try_fatcat(doi=doi, timeout=timeout)),
         ("doi_patterns", lambda: try_doi_patterns(doi=doi, timeout=timeout)),
     ]
+    allowed = {s.strip().lower() for s in sources} if sources else None
+    if allowed is not None:
+        resolvers = [(name, func) for name, func in resolvers if name in allowed]
 
     import concurrent.futures
     
@@ -3633,7 +3718,7 @@ def _fetch_from_expanded_sources(
         except Exception as exc:
             return name, None, None, None, str(exc)
             
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(resolvers)) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(resolvers))) as executor:
         futures = [executor.submit(_inherit_budget(run_resolver), name, func) for name, func in resolvers]
         for fut in concurrent.futures.as_completed(futures):
             name, urls, extra_meta, raw, exc_str = fut.result()
@@ -3689,8 +3774,10 @@ def _fetch_from_expanded_sources(
             ("google_scholar", lambda: try_google_scholar(title=title, timeout=timeout)),
             ("cyberleninka", lambda: try_cyberleninka(title=title, timeout=timeout)),
         ]
+        if allowed is not None:
+            title_resolvers = [(name, func) for name, func in title_resolvers if name in allowed]
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(title_resolvers)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(title_resolvers))) as executor:
             futures = [executor.submit(_inherit_budget(run_resolver), name, func) for name, func in title_resolvers]
             for fut in concurrent.futures.as_completed(futures):
                 name, urls, extra_meta, raw, exc_str = fut.result()
@@ -3778,6 +3865,7 @@ def fetch(
         overwrite=overwrite,
         timeout=timeout,
         original_result=result,
+        sources=sources,
     )
 
 

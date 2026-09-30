@@ -16,6 +16,7 @@ refused the request: 401/403/404 are never retried here.
 from __future__ import annotations
 
 import email.utils
+import os
 import random
 import threading
 import time
@@ -33,8 +34,39 @@ MAX_RETRY_AFTER = 60.0    # a longer Retry-After means "come back another day"
 COOLDOWN_AFTER_FAILURES = 4
 COOLDOWN_SECONDS = (30.0, 120.0, 600.0)
 
+# Minimum spacing between requests to the same metadata API, from each
+# service's published limit with some headroom. Without it, four articles in
+# parallel plus the title-recovery searches burst past the limit, the API
+# answers 429, and the cooldown above then takes the host out of the run for
+# minutes — silently, for every article that follows.
+MIN_INTERVAL = {
+    "api.openalex.org": 0.12,          # 10 req/s with a key
+    "api.semanticscholar.org": 1.05,   # 1 req/s with a key; the anonymous pool is shared by everyone
+    "api.crossref.org": 0.1,           # polite pool
+    "api.unpaywall.org": 0.1,
+    "www.ebi.ac.uk": 0.1,              # Europe PMC REST
+    "ncbi": 0.11,                      # 10 req/s with NCBI_API_KEY
+}
+
+# Stricter spacing when the service's key is missing: anonymous OpenAlex answers
+# bursts well under its documented 10 req/s with 429, and NCBI allows 3 req/s
+# per IP without a key — counted across all of its hosts together.
+ANONYMOUS_INTERVAL = {
+    "api.openalex.org": ("OPENALEX_API_KEY", 0.5),
+    "ncbi": ("NCBI_API_KEY", 0.4),
+}
+
+# Hosts that share one limit. The ID converter (the door to the PMC bucket,
+# the source that delivers most) and E-utilities are both NCBI.
+PACE_GROUP = {
+    "pmc.ncbi.nlm.nih.gov": "ncbi",
+    "eutils.ncbi.nlm.nih.gov": "ncbi",
+    "www.ncbi.nlm.nih.gov": "ncbi",
+}
+
 _lock = threading.Lock()
 _hosts: dict[str, dict] = {}
+_next_slot: dict[str, float] = {}
 
 
 def host_of(url: str) -> str:
@@ -87,6 +119,36 @@ def host_ready(url: str) -> bool:
     return cooldown_remaining(url) <= 0.0
 
 
+def _interval(key: str) -> float | None:
+    anonymous = ANONYMOUS_INTERVAL.get(key)
+    if anonymous and not os.environ.get(anonymous[0], "").strip():
+        return anonymous[1]
+    return MIN_INTERVAL.get(key)
+
+
+def pace(url: str, *, max_wait: float | None = None) -> float:
+    """Wait for this host's next request slot. Returns the seconds waited.
+
+    Slots are reserved under the lock and slept outside it, so concurrent
+    callers queue in order instead of all waking at once. ``max_wait`` bounds
+    the sleep (the caller's remaining article budget); the slot is still taken.
+    """
+    key = PACE_GROUP.get(host_of(url), host_of(url))
+    interval = _interval(key)
+    if not interval:
+        return 0.0
+    with _lock:
+        now = time.monotonic()
+        slot = max(now, _next_slot.get(key, 0.0))
+        _next_slot[key] = slot + interval
+    wait = slot - now
+    if max_wait is not None:
+        wait = min(wait, max(0.0, max_wait))
+    if wait > 0:
+        time.sleep(wait)
+    return max(0.0, wait)
+
+
 def note_success(url: str) -> None:
     host = host_of(url)
     if not host:
@@ -133,3 +195,4 @@ def snapshot() -> dict[str, dict]:
 def reset() -> None:
     with _lock:
         _hosts.clear()
+        _next_slot.clear()

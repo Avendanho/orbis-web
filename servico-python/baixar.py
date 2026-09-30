@@ -43,7 +43,17 @@ _FALHAS = {
     "download_item_deadline": "O tempo reservado para este artigo acabou antes de alguma fonte entregar o PDF. Tente de novo.",
     "download_host_cooldown": "A fonte que tem o PDF recusou pedidos há pouco e está em pausa. Tente de novo em alguns minutos.",
     "download_not_a_pdf": "A fonte devolveu uma página em vez do PDF.",
+    # Sessão institucional (CAPES/EZproxy no navegador).
+    "download_sem_acesso_institucional": "A sua instituição não dá acesso a este artigo: a editora pediu compra ou login.",
+    "download_sem_pdf_na_pagina": "A página do artigo abriu com a sua sessão institucional, mas não ofereceu o PDF.",
+    "download_pdf_nao_entregue": "A editora mostrou o link do PDF, mas não o entregou pela sessão institucional.",
+    "download_prazo_esgotado_na_fila": "O tempo deste artigo acabou enquanto a sessão institucional atendia outros. Tente de novo.",
+    "download_prazo_esgotado": "O tempo deste artigo acabou dentro da sessão institucional. Tente de novo.",
 }
+
+
+_SESSAO_EXPIRADA = ("A sessão institucional (CAPES/EZproxy) expirou: renove o login com "
+                    "`python motor/src/download/sessao_navegador.py login` — o motor volta a usá-la sozinho.")
 
 
 def _motivo_falha(erro) -> tuple[str, str]:
@@ -140,7 +150,13 @@ def _executar(doi, esperado, prazo, pasta, fetch_mod, identity_mod, extrair, rel
         if relatorio:
             _registrar(relatorio, doi, "nao_localizado", None, None)
         motivo, codigo = _motivo_falha(r.get("error"))
-        return {"ok": False, "erro": motivo, **({"codigo": codigo} if codigo else {}), "fontes_tentadas": fontes}
+        resposta = {"ok": False, "erro": motivo, **({"codigo": codigo} if codigo else {}), "fontes_tentadas": fontes}
+        # A sessão caída vale para todos os próximos artigos, qualquer que tenha
+        # sido o último erro deste: é isso que o pesquisador precisa saber.
+        if any(t.get("reason") == "sessao_expirada" for t in r.get("download_attempts") or []):
+            resposta["erro"] = f"{motivo} {_SESSAO_EXPIRADA}"
+            resposta["sessao_expirada"] = True
+        return resposta
 
     dados = caminho.read_bytes()
     identidade = _identidade(identity_mod.validate_article_identity(

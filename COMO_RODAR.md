@@ -151,6 +151,72 @@ cd ../download && ../../.venv/bin/python audit_corpus.py
 > `--out pdfs` grava em `motor/src/download/pdfs/`. **Use caminho absoluto** e
 > não há dúvida.
 
+### Taxa de recuperação de PDFs: o que muda o resultado
+
+A taxa depende mais da configuração do que do código. Numa amostra de 100
+DOIs reais de uma revisão, só 48 tinham **alguma** cópia legal em acesso
+aberto — e o motor recuperou 40 delas. Os outros 52 são de assinatura: só
+saem com o acesso que a sua instituição já paga. Detalhes em
+[motor/ANALISE.md](motor/ANALISE.md).
+
+**1. Veja o que está funcionando:**
+
+```bash
+cd motor
+.venv/bin/python scripts/diagnostico.py
+```
+
+Ele confere cada chave (e se ainda está com o texto do exemplo), a cota da
+OpenAlex, se a rede tem acesso por IP às editoras e a sessão institucional, e
+lista o que fazer em ordem de ganho.
+
+**2. Acesso institucional pela CAPES (CAFe) ou pelo EZproxy da biblioteca.**
+É o que alcança os artigos de assinatura. O login é o seu, feito uma vez num
+navegador que o motor depois reaproveita:
+
+```bash
+cd motor
+.venv/bin/python src/download/sessao_navegador.py login
+```
+
+Abre um Chromium. Entre no Portal de Periódicos da CAPES → *Acesso CAFe* →
+sua instituição (ou no EZproxy da biblioteca), abra um artigo de assinatura
+para conferir que o acesso funciona e **feche a janela**. Depois, no
+`motor/.env`:
+
+```
+ORBIS_SESSAO_NAVEGADOR=1
+# Se, com o login feito, o endereço dos artigos ficar como
+# www-sciencedirect-com.ezNN.periodicos.capes.gov.br, informe o EZproxy:
+# ORBIS_SESSAO_EZPROXY=https://ezNN.periodicos.capes.gov.br
+```
+
+Confira com um DOI de assinatura:
+
+```bash
+.venv/bin/python scripts/diagnostico.py --testar-sessao 10.1007/s10719-009-9256-7
+```
+
+A sessão baixa **um artigo por vez, com 6 s de intervalo e no máximo 150 por
+execução** (`ORBIS_SESSAO_INTERVALO`, `ORBIS_SESSAO_MAX_ARTIGOS`). As
+licenças das editoras proíbem download sistemático, e um robô rápido demais
+faz a editora bloquear a instituição inteira — não afrouxe esses limites.
+Quando a sessão expira, o motor avisa e para de usá-la; rode o `login` de
+novo e ele volta a usá-la sozinho, sem reiniciar.
+
+**3. Meça:**
+
+```bash
+.venv/bin/python scripts/benchmark.py --arquivo lista.csv --amostra 100 --teto-oa --saida relatorio/bench-1
+# depois de mudar a configuração, compare:
+.venv/bin/python scripts/benchmark.py --arquivo lista.csv --amostra 100 --teto-oa \
+    --saida relatorio/bench-2 --comparar relatorio/bench-1/resultados.json
+```
+
+O benchmark usa só fontes legais (`--fontes todas` inclui as fontes-sombra,
+que não contam para a meta) e, com `--teto-oa`, separa "o motor errou" de
+"não existe cópia legal".
+
 ### Onde ficam os dados
 
 Por padrão na raiz do motor: `motor/pdfs/`, `motor/data/`, `motor/relatorio/`.
@@ -170,7 +236,10 @@ Todas opcionais. Sem elas o sistema funciona, só com menos recursos.
 
 | Variável | Para quê | Sem ela |
 |---|---|---|
-| `UNPAYWALL_EMAIL` | Unpaywall, a fonte de maior rendimento | A fonte se omite |
+| `UNPAYWALL_EMAIL` | Unpaywall, a fonte de maior rendimento — precisa ser um e-mail seu, não o do exemplo | A fonte se omite |
+| `OPENALEX_API_KEY` | OpenAlex sem o teto anônimo (~1000 consultas/dia por IP) | Para de responder no meio de acervos grandes |
+| `ELSEVIER_API_KEY` | Artigos Elsevier em acesso aberto pela API oficial (a página da ScienceDirect barra robôs) | Esses artigos falham com bloqueio |
+| `ORBIS_SESSAO_NAVEGADOR`, `ORBIS_SESSAO_EZPROXY` | Sessão institucional CAPES/CAFe ou EZproxy (ver acima) | Artigos de assinatura não saem |
 | `NCBI_API_KEY`, `NCBI_EMAIL` | Eleva o teto de consultas do PubMed (e da Cochrane, que passa pelo PubMed) | Funciona, mais devagar |
 | `EMBASE_API_KEY` (ou `ELSEVIER_API_KEY`), `EMBASE_INST_TOKEN` (ou `ELSEVIER_INST_TOKEN`) | Busca no Embase | A busca no Embase responde com erro de credencial; as outras bases seguem |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Triagem automática por IA | O botão não aparece; a importação manual continua |
@@ -191,7 +260,7 @@ for t in tests/*.mjs; do node "$t"; done
 # verificação de tipos
 pnpm exec tsc --noEmit
 
-# motor — 277 testes
+# motor — 336 testes (e 42 no servico-python)
 cd motor && .venv/bin/python -m pytest -q
 ```
 

@@ -32,13 +32,25 @@ cd src/analysis && ../../.venv/bin/python main.py scan
 > `--out` relativo é resolvido a partir da pasta do script, não de onde você
 > chamou. Use caminho absoluto.
 
+## Taxa de recuperação
+
+Metade de um acervo típico é de assinatura e não tem cópia aberta em lugar
+nenhum; o que decide a taxa é a configuração. Diagnóstico e medição em
+[ANALISE.md](ANALISE.md).
+
+```bash
+.venv/bin/python scripts/diagnostico.py                       # o que está funcionando e o que fazer
+.venv/bin/python src/download/sessao_navegador.py login       # acesso CAPES/CAFe ou EZproxy, uma vez
+.venv/bin/python scripts/benchmark.py --arquivo lista.csv --amostra 100 --teto-oa
+```
+
 Instruções completas, incluindo variáveis de ambiente e a ligação com o ORBIS:
 **[../COMO_RODAR.md](../COMO_RODAR.md)**.
 
 ## Testes
 
 ```bash
-.venv/bin/python -m pytest -q      # 262 testes
+.venv/bin/python -m pytest -q      # 336 testes
 ```
 
 ## Dados

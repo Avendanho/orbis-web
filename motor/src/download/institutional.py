@@ -205,13 +205,43 @@ def fetch_pdf(url: str, *, timeout: int = 30) -> tuple[bytes | None, str | None]
             continue
         data = resp.content or b""
         if data[:5] != b"%PDF-":
-            last_error = f"{label}_not_a_pdf"
-            continue
+            # Through the proxy the publisher usually answers with the article
+            # page, not the file: the licensed PDF is the one the page itself
+            # declares (citation_pdf_url), fetched with the same session.
+            data = _pdf_from_landing(attempt_session, resp, timeout=timeout)
+            if data is None:
+                last_error = f"{label}_not_a_pdf"
+                continue
         if len(data) > MAX_PDF_SIZE:
             last_error = f"{label}_size_exceeded"
             continue
         return data, None
     return None, last_error
+
+
+MAX_LANDING_LINKS = 3
+
+
+def _pdf_from_landing(session, resp, *, timeout: int) -> bytes | None:
+    """The PDF an authenticated article page links to, or None."""
+    content_type = str((getattr(resp, "headers", None) or {}).get("content-type", "")).lower()
+    body = resp.content or b""
+    if "html" not in content_type and b"<html" not in body[:2048].lower():
+        return None
+    if len(body) > 2 * 1024 * 1024:
+        return None
+    from pdf_links import extract_pdf_links
+
+    page_url = str(getattr(resp, "url", "") or "")
+    for link in extract_pdf_links(body.decode("utf-8", "replace"), page_url)[:MAX_LANDING_LINKS]:
+        try:
+            linked = session.get(link, timeout=timeout, allow_redirects=True, headers={"Referer": page_url})
+        except Exception:
+            continue
+        data = linked.content or b""
+        if linked.status_code == 200 and data[:5] == b"%PDF-":
+            return data
+    return None
 
 
 def apply_environment() -> str | None:

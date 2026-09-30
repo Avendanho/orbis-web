@@ -17,6 +17,7 @@ lá por que não é um import direto de ``fetch``.
 from __future__ import annotations
 
 import os
+import threading
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -61,11 +62,24 @@ def try_europe_pmc(pmcid: str) -> str:
     return f"https://europepmc.org/articles/{_norm_pmcid(pmcid)}?pdf=render"
 
 
+# The cascade asks the ID converter for the same DOI at two points (the PMC
+# bucket, then the PubMed Central step). Only answers are kept: a failed call
+# (429, timeout) is not "this article has no PMCID", and the second point gets
+# to ask again instead of inheriting the failure.
+_IDCONV_CACHE: dict[str, dict] = {}
+_IDCONV_CACHE_MAX = 4096
+_idconv_lock = threading.Lock()
+
+
 def try_pmc_idconv(identifier: str, *, timeout: int) -> dict:
     """Map a DOI or PMID to its PMC ids with NCBI's official ID converter.
 
     Returns {"pmcid": ..., "pmid": ...} (keys absent when unknown).
     """
+    key = identifier.strip().lower()
+    with _idconv_lock:
+        if key in _IDCONV_CACHE:
+            return dict(_IDCONV_CACHE[key])
     params = {"ids": identifier, "format": "json", "tool": "paper-fetch"}
     email = os.environ.get("NCBI_EMAIL", "").strip() or runtime.EMAIL
     if email:
@@ -75,16 +89,20 @@ def try_pmc_idconv(identifier: str, *, timeout: int) -> dict:
         data = runtime._get_json(url, timeout=timeout)
     except Exception:
         return {}
+    out: dict = {}
     for rec in data.get("records") or []:
         if rec.get("status") == "error":
             continue
-        out = {}
         if rec.get("pmcid"):
             out["pmcid"] = _norm_pmcid(rec["pmcid"])
         if rec.get("pmid"):
             out["pmid"] = str(rec["pmid"])
-        return out
-    return {}
+        break
+    with _idconv_lock:
+        if len(_IDCONV_CACHE) >= _IDCONV_CACHE_MAX:
+            _IDCONV_CACHE.clear()
+        _IDCONV_CACHE[key] = dict(out)
+    return out
 
 
 def try_europe_pmc_links(doi: str, *, timeout: int, errors: list | None = None) -> tuple[list[str], str | None]:

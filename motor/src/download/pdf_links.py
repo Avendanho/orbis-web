@@ -41,6 +41,22 @@ _PDF_TYPES = {"application/pdf", "application/octet-stream", "application/x-pdf"
 _HANDLE_RE = re.compile(r"^https?://(hdl\.handle\.net|handle\.net)/", re.IGNORECASE)
 
 
+# Supplementary material, by each publisher's own URL convention: Springer
+# ESM/MOESM, Elsevier mmcN, Wiley downloadSupplement/sup-000N, Taylor & Francis
+# and ACS suppl paths, PLOS type=supplementary. Only explicit conventions: a
+# bare "supplemental" also turns up in titles and repository file names.
+_SUPPLEMENTARY_RE = re.compile(
+    r"(/esm/|_moesm\d+_esm\b|[-_]mmc\d+\.|/downloadsupplement\b|[-_]sup-\d{4}|/suppl_file/|/doi/suppl/|"
+    r"[?&]type=supplementary\b)",
+    re.IGNORECASE,
+)
+
+
+def is_supplementary_url(url: str) -> bool:
+    """True when the URL names a supplementary file, which is never the article."""
+    return bool(_SUPPLEMENTARY_RE.search(unquote(url)))
+
+
 def _looks_like_pdf_url(url: str) -> int | None:
     """Rank for a URL judged only by its shape, or None when it looks unrelated."""
     path_and_query = urlsplit(url).path + "?" + (urlsplit(url).query or "")
@@ -165,6 +181,11 @@ def extract_pdf_links(html_text: str, page_url: str, *, doi: str | None = None) 
     for rank, value in sorted(parser.links, key=lambda item: item[0]):
         url = urldefrag(urljoin(parser.base, value))[0]
         if urlsplit(url).scheme not in {"http", "https"} or url in result:
+            continue
+        # When the article's own PDF is refused (Springer sends bots back to
+        # the landing page), the next link on the page is often its
+        # supplement: downloading it only burns a candidate on a rejection.
+        if is_supplementary_url(url):
             continue
         if tokens and rank >= _RANK_ANCHOR and not any(t in unquote(url).lower() for t in tokens):
             continue

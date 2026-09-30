@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fetch
+import sources_pubmed as fetch_sources_pubmed
 
 S3_LISTING = b"""<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
 <Contents><Key>PMC123.1/PMC123.1.json</Key></Contents>
@@ -41,6 +42,8 @@ class NewSourceTests(unittest.TestCase):
         payload = {"records": [{"requested-id": "10.1/x", "status": "error"}]}
         with patch.object(fetch, "_get_json", return_value=payload):
             self.assertEqual(fetch.try_pmc_idconv("10.1/x", timeout=5), {})
+        # Respostas ficam em cache por DOI; a segunda metade simula outra resposta.
+        fetch_sources_pubmed._IDCONV_CACHE.clear()
         payload = {"records": [{"pmcid": "PMC77", "pmid": 55}]}
         with patch.object(fetch, "_get_json", return_value=payload):
             self.assertEqual(fetch.try_pmc_idconv("10.1/x", timeout=5), {"pmcid": "PMC77", "pmid": "55"})

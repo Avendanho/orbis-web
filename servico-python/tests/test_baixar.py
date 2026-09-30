@@ -216,6 +216,9 @@ class FetchComErro(FetchFalso):
     ({"code": "download_item_deadline", "message": "x"}, "tempo reservado"),
     ({"code": "resolve_network_error", "message": "x"}, "bases de metadados"),
     ({"code": "download_algo_novo", "message": "Download failed from x: algo_novo"}, "algo_novo"),
+    ({"code": "download_sem_acesso_institucional", "message": "x"}, "não dá acesso a este artigo"),
+    ({"code": "download_sem_pdf_na_pagina", "message": "x"}, "não ofereceu o PDF"),
+    ({"code": "download_prazo_esgotado_na_fila", "message": "x"}, "sessão institucional atendia"),
 ])
 def test_falha_vira_frase_legivel(tmp_path, erro, trecho):
     r = chamar(tmp_path, fetch=FetchComErro(erro))
@@ -223,3 +226,19 @@ def test_falha_vira_frase_legivel(tmp_path, erro, trecho):
     assert trecho in r["erro"]
     assert "{" not in r["erro"] and "'code'" not in r["erro"]
     assert r["codigo"] == erro["code"]
+
+
+class FetchSessaoExpirada(FetchFalso):
+    def fetch(self, doi, out_dir, *, dry_run, overwrite, timeout, sources=None):
+        return {"doi": doi, "success": False, "file": None, "sources_tried": ["sessao_institucional", "crossref"],
+                "download_attempts": [{"source": "sessao_institucional", "url": None, "reason": "sessao_expirada"},
+                                      {"source": "crossref", "url": "https://x", "reason": "http_403"}],
+                "error": {"code": "download_http_403", "message": "x"}}
+
+
+def test_sessao_institucional_expirada_diz_como_renovar(tmp_path):
+    r = chamar(tmp_path, fetch=FetchSessaoExpirada())
+    assert r["ok"] is False
+    assert "bloqueia o download automático" in r["erro"]
+    assert "sessão institucional" in r["erro"] and "sessao_navegador.py login" in r["erro"]
+    assert r["sessao_expirada"] is True
