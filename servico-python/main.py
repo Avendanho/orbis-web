@@ -256,7 +256,7 @@ def rota_baixar(p: PedidoBaixar):
                 doi=p.doi, projeto=p.projeto, modo=p.modo,
                 esperado={"title": p.titulo, "author": p.autor, "year": p.ano, "journal": p.periodico},
                 prazo=max(10, min(p.prazo, 300)), pasta_pdfs=PASTA_PDFS,
-                fetch_mod=fetch, identity_mod=identity, extrair=motor_baixar.extrair_texto,
+                fetch_mod=fetch, identity_mod=identity,
             )
         except motor_baixar.PedidoInvalido as exc:
             raise HTTPException(400, str(exc)) from exc

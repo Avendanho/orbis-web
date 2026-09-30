@@ -42,8 +42,13 @@ class IdentidadeFalsa:
                 "validation_score": 1.0 if self.ok else 0.0, "reason": self.motivo}
 
 
+def texto_de(texto, paginas=3):
+    """Extração falsa no formato de ``extracao.extrair``: (caminho, pasta_imagens) -> dict."""
+    return lambda caminho, pasta_imagens: {"texto": texto, "formato": "texto", "paginas": paginas, "imagens": 0}
+
+
 def chamar(tmp_path, modo="baixar", fetch=None, ident=None,
-           extrair=lambda dados: ("texto do artigo", 3), projeto="proj-1", doi="10.1/a", pasta=None):
+           extrair=texto_de("texto do artigo"), projeto="proj-1", doi="10.1/a", pasta=None):
     return motor_baixar.baixar_artigo(
         doi=doi, projeto=projeto, modo=modo, esperado={"title": "T"}, prazo=90,
         pasta_pdfs=pasta or tmp_path / "pdfs", fetch_mod=fetch or FetchFalso(),
@@ -121,18 +126,18 @@ def test_nao_localizado_registra_no_relatorio(tmp_path):
 
 
 def test_texto_truncado(tmp_path):
-    r = chamar(tmp_path, extrair=lambda d: ("a" * 250_000, 10))
+    r = chamar(tmp_path, extrair=texto_de("a" * 250_000, 10))
     assert len(r["texto"]) == motor_baixar.LIMITE_TEXTO
     assert r["chars"] == motor_baixar.LIMITE_TEXTO
     assert r["texto_truncado"] is True
 
 
 def test_pdf_sem_texto_entra_com_aviso(tmp_path):
-    def quebra(dados):
+    def quebra(caminho, pasta_imagens):
         raise ValueError("escaneado")
     r = chamar(tmp_path, extrair=quebra)
     assert r["ok"] is True and r["texto"] == "" and r["aviso"] == "sem_texto"
-    r = chamar(tmp_path, extrair=lambda d: ("   \n", 1))
+    r = chamar(tmp_path, extrair=texto_de("   \n", 1))
     assert r["texto"] == "" and r["aviso"] == "sem_texto"
 
 
@@ -242,3 +247,72 @@ def test_sessao_institucional_expirada_diz_como_renovar(tmp_path):
     assert "bloqueia o download automático" in r["erro"]
     assert "sessão institucional" in r["erro"] and "sessao_navegador.py login" in r["erro"]
     assert r["sessao_expirada"] is True
+
+
+# --- Markdown (parte B): o texto sai do arquivo guardado; no modo "baixar" o
+# .md e as imagens ficam ao lado do PDF.
+
+class ExtracaoFalsa:
+    """Grava uma imagem na pasta pedida, como o pymupdf4llm."""
+    def __init__(self, formato="markdown", aviso=None):
+        self.formato, self.aviso, self.chamadas = formato, aviso, []
+
+    def __call__(self, caminho, pasta_imagens):
+        self.chamadas.append((Path(caminho), pasta_imagens))
+        assert Path(caminho).read_bytes().startswith(b"%PDF"), "extrai do arquivo, não dos bytes"
+        imagens = 0
+        if pasta_imagens:
+            pasta_imagens.mkdir()
+            (pasta_imagens / "fig-1.png").write_bytes(b"png")
+            imagens = 1
+        r = {"texto": "# Titulo\n\n![](%s/fig-1.png)" % (pasta_imagens.name if pasta_imagens else "x"),
+             "formato": self.formato, "paginas": 2, "imagens": imagens}
+        if self.aviso:
+            r["aviso"] = self.aviso
+        return r
+
+
+def test_baixar_grava_md_e_imagens_ao_lado_do_pdf(tmp_path):
+    ex = ExtracaoFalsa()
+    r = chamar(tmp_path, extrair=ex)
+    pasta = tmp_path / "pdfs" / "proj-1"
+    assert ex.chamadas == [(pasta / "Silva_2021_T.pdf", pasta / "Silva_2021_T_imagens")]
+    assert r["formato"] == "markdown" and r["imagens"] == 1
+    assert r["arquivo_md"] == "Silva_2021_T.md" and r["pasta_imagens"] == "Silva_2021_T_imagens"
+    assert (pasta / "Silva_2021_T.md").read_text(encoding="utf-8").startswith("# Titulo")
+    assert (pasta / "Silva_2021_T_imagens" / "fig-1.png").exists()
+    assert r["texto"].startswith("# Titulo")
+
+
+def test_analisar_nao_deixa_md_nem_imagens(tmp_path):
+    ex, f = ExtracaoFalsa(), FetchFalso()
+    r = chamar(tmp_path, modo="analisar", fetch=f, extrair=ex)
+    assert ex.chamadas[0][1] is None, "sem pasta de imagens no modo analisar"
+    assert r["formato"] == "markdown" and r["imagens"] == 0
+    assert "arquivo_md" not in r and "pasta_imagens" not in r
+    assert not (tmp_path / "pdfs").exists() and not f.pastas[0].exists()
+
+
+def test_texto_simples_nao_grava_md(tmp_path):
+    r = chamar(tmp_path, extrair=ExtracaoFalsa(formato="texto", aviso="Falha na extração em Markdown; foi usado o texto simples."))
+    assert r["formato"] == "texto" and "arquivo_md" not in r
+    assert r["aviso_extracao"] == "Falha na extração em Markdown; foi usado o texto simples."
+    assert not list((tmp_path / "pdfs" / "proj-1").glob("*.md"))
+
+
+def test_repetir_o_doi_substitui_md(tmp_path):
+    chamar(tmp_path, extrair=ExtracaoFalsa())
+    chamar(tmp_path, extrair=texto_de("sem markdown agora"))
+    pasta = tmp_path / "pdfs" / "proj-1"
+    assert not (pasta / "Silva_2021_T.md").exists(), ".md antigo não fica mentindo sobre o texto"
+    assert not (pasta / "Silva_2021_T_imagens").exists()
+
+
+def test_extracao_padrao_usa_o_modulo(tmp_path, monkeypatch):
+    import extracao
+    visto = []
+    monkeypatch.setattr(extracao, "extrair_conforme_opcoes", lambda c, p: visto.append((c, p)) or
+                        {"texto": "t", "formato": "texto", "paginas": 1, "imagens": 0})
+    motor_baixar.baixar_artigo(doi="10.1/a", projeto="p", modo="analisar", esperado={}, prazo=90,
+                               pasta_pdfs=tmp_path, fetch_mod=FetchFalso(), identity_mod=IdentidadeFalsa())
+    assert len(visto) == 1

@@ -13,7 +13,7 @@ const TIMEOUT=120000;
 
 export type EngineStatus={online:boolean;resources:string[];missing:string[];url:string;pdfDir:string};
 export type EngineIdentity={ok:boolean;metodo:string;score:number;detalhe:string};
-export type EngineDownload={ok:boolean;erro?:string;fonte?:string;fontes_tentadas?:string[];arquivo?:string;identidade?:EngineIdentity;texto?:string;paginas?:number;chars?:number;texto_truncado?:boolean;aviso?:string};
+export type EngineDownload={ok:boolean;erro?:string;fonte?:string;fontes_tentadas?:string[];arquivo?:string;identidade?:EngineIdentity;texto?:string;paginas?:number;chars?:number;texto_truncado?:boolean;aviso?:string;formato?:string;imagens?:number;pasta_imagens?:string;arquivo_md?:string;aviso_extracao?:string};
 export type DownloadRequest={doi:string;projeto:string;modo:'baixar'|'analisar';titulo?:string;autor?:string;ano?:string;periodico?:string;prazo?:number};
 
 // Recusa explícita do motor (entrada inválida, disco cheio). Diferente de

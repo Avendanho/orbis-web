@@ -8,6 +8,7 @@ const identidade={ok:true,metodo:'doi_in_pdf',score:1,detalhe:'identidade confir
 const respostas={
  '10.1234/ok':{ok:true,fonte:'unpaywall',fontes_tentadas:['unpaywall'],identidade,texto,paginas:3,chars:texto.length,texto_truncado:false},
  '10.1234/baixado':{ok:true,fonte:'pmc',fontes_tentadas:['pmc'],arquivo:'Silva_2021_Teste.pdf',identidade,texto:'',paginas:2,chars:0,texto_truncado:false,aviso:'sem_texto'},
+ '10.1234/md':{ok:true,fonte:'pmc',fontes_tentadas:['pmc'],identidade,texto:'# Titulo\n\nCorpo.',paginas:1,chars:17,texto_truncado:false,formato:'markdown',imagens:0},
  '10.1234/nada':{ok:false,erro:'Nenhuma fonte entregou o PDF.',fontes_tentadas:['unpaywall','pmc']},
 };
 const pedidos=[];
@@ -83,6 +84,8 @@ try{
 
  // Texto pela rota.
  r=await req(path+'/texto?article='+art.id);assert.equal(r.status,200);assert.equal(r.data,texto);
+ const tTxt=await mf.dispatchFetch('https://test.example'+path+'/texto?article='+art.id,{headers:auth});
+ assert.equal(tTxt.headers.get('content-type'),'text/plain; charset=utf-8','texto sem formato continua text/plain');await tTxt.text();
  assert.equal((await req(path+'/texto?article=inexistente')).status,404);
 
  // Modo salvo no projeto.
@@ -141,5 +144,16 @@ try{
  pB2=(await req(pathB)).data;const artB=pB2.state.articles[0];
  assert.equal((await req(pathB,'PATCH',{revision:pB2.revision,action:'removeArticle',article:artB.id,confirmation:artB.id})).status,200);
  for(const k of chavesA)assert.ok(await r2.get(k),'texto da origem continua: '+k);
+ // Parte B: Markdown do motor é guardado com o formato e servido como text/markdown.
+ const pMd=(await req('/api/projects','POST',{name:'Markdown'})).data,pathMd='/api/projects/'+pMd.id;
+ await db.prepare('INSERT INTO search_items(project,doi,status,result,updated) VALUES(?,?,?,?,?)').bind(pMd.id,'10.1234/md','done',JSON.stringify({doi:'10.1234/md',found:true,title:'Artigo md',authors:'Silva',year:'2021',journal:'Teste',pdfUrls:[]}),new Date().toISOString()).run();
+ await incluir(pathMd,['10.1234/md']);
+ r=await req(pathMd+'/motor','POST',{doi:'10.1234/md',modo:'analisar'});assert.equal(r.status,200);assert.equal(r.data.motor.texto.formato,'markdown');
+ let pm=(await req(pathMd)).data;
+ assert.equal((await req(pathMd,'PATCH',{revision:pm.revision,action:'incorporate',doi:'10.1234/md'})).status,200);
+ pm=(await req(pathMd)).data;const artMd=pm.state.articles[0];assert.equal(artMd.texto.formato,'markdown');
+ const tMd=await mf.dispatchFetch('https://test.example'+pathMd+'/texto?article='+artMd.id,{headers:auth});
+ assert.equal(tMd.headers.get('content-type'),'text/markdown; charset=utf-8');assert.equal(await tMd.text(),'# Titulo\n\nCorpo.');
+ assert.equal((await r2.head(artMd.texto.key)).httpMetadata.contentType,'text/markdown; charset=utf-8');
  console.log('motor-integration: ok');
 }finally{await mf.dispose()}

@@ -10,6 +10,9 @@ Nos dois modos o PDF só é aceito depois da identidade conferida pelo CONTEÚDO
 do arquivo. Um PDF de outro artigo é apagado até no modo ``baixar``: um
 arquivo errado na pasta passaria por certo.
 
+O texto sai em Markdown (``extracao.py``). No modo ``baixar``, o ``.md`` e as
+imagens (``<nome>_imagens/``) ficam ao lado do PDF.
+
 As dependências (``fetch``, ``identity``, extração de texto) chegam por
 parâmetro para que os testes rodem sem rede e sem o pipeline.
 """
@@ -22,6 +25,8 @@ import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
+
+import extracao
 
 MODOS = {"baixar", "analisar"}
 LIMITE_TEXTO = 200_000
@@ -85,18 +90,6 @@ class DiscoIndisponivel(OSError):
     """A pasta de destino não pode ser usada; os próximos artigos falhariam igual."""
 
 
-def extrair_texto(dados: bytes) -> tuple[str, int]:
-    try:
-        import pymupdf
-    except ImportError:
-        import fitz as pymupdf
-    doc = pymupdf.open(stream=dados, filetype="pdf")
-    try:
-        return "\n".join(doc[i].get_text() for i in range(doc.page_count)), doc.page_count
-    finally:
-        doc.close()
-
-
 def _identidade(veredito: dict) -> dict:
     ok = bool(veredito.get("identity_validated"))
     motivo = veredito.get("reason")
@@ -116,7 +109,7 @@ def _registrar(pasta: Path, doi: str, situacao: str, fonte: str | None, arquivo:
 
 
 def baixar_artigo(*, doi: str, projeto: str, modo: str, esperado: dict, prazo: int,
-                  pasta_pdfs: Path, fetch_mod, identity_mod, extrair=extrair_texto) -> dict:
+                  pasta_pdfs: Path, fetch_mod, identity_mod, extrair=None) -> dict:
     if not _PROJETO.fullmatch(projeto or ""):
         raise PedidoInvalido("Identificador de projeto inválido.")
     if modo not in MODOS:
@@ -129,6 +122,8 @@ def baixar_artigo(*, doi: str, projeto: str, modo: str, esperado: dict, prazo: i
             raise DiscoIndisponivel(f"Não foi possível usar a pasta {pasta}: {exc}") from exc
     else:
         pasta = None
+    # Resolvido na hora: as opções da extração mudam pela tela de Configurações.
+    extrair = extrair or (lambda caminho, imagens: extracao.extrair_conforme_opcoes(caminho, imagens))
     # O fetch sempre baixa numa pasta só deste artigo. Direto na pasta do
     # projeto, dois artigos com o mesmo nome gerado (a fonte pmc_s3 não traz
     # autor nem título: tudo vira "unknown_nd_paper.pdf") se sobrescreviam, e a
@@ -171,25 +166,47 @@ def _executar(doi, esperado, prazo, pasta, fetch_mod, identity_mod, extrair, rel
             _registrar(relatorio, doi, "recusado_identidade", fonte, None)
         return {"ok": False, "erro": identidade["detalhe"], "fontes_tentadas": fontes, "identidade": identidade}
 
+    # No modo "baixar" o PDF vai para a pasta do projeto antes da extração: as
+    # imagens e o .md nascem ao lado dele, com o mesmo nome.
+    arquivo = _guardar(caminho, relatorio, doi) if relatorio else None
+    if arquivo:
+        caminho = relatorio / arquivo
+    base = caminho.with_suffix("")
+    imagens = base.parent / f"{base.name}_imagens" if arquivo else None
+    if imagens:
+        # Baixar de novo substitui as imagens (e some com elas se agora estão desligadas).
+        shutil.rmtree(imagens, ignore_errors=True)
     # PDF escaneado ou corrompido: a identidade já foi confirmada, então o
     # artigo entra; só a análise de texto completo fica sem base.
     try:
-        texto, paginas = extrair(dados)
+        ex = extrair(caminho, imagens)
     except Exception:
-        texto, paginas = "", 0
+        ex = {"texto": "", "formato": "texto", "paginas": 0, "imagens": 0}
+    texto = str(ex.get("texto") or "")
     aviso = None if texto.strip() else "sem_texto"
     if aviso:
         texto = ""
+    formato = "markdown" if ex.get("formato") == "markdown" and texto else "texto"
     resposta = {
         "ok": True, "fonte": fonte, "fontes_tentadas": fontes, "identidade": identidade,
-        "texto": texto[:LIMITE_TEXTO], "paginas": paginas, "chars": min(len(texto), LIMITE_TEXTO),
-        "texto_truncado": len(texto) > LIMITE_TEXTO,
+        "texto": texto[:LIMITE_TEXTO], "paginas": int(ex.get("paginas") or 0), "chars": min(len(texto), LIMITE_TEXTO),
+        "texto_truncado": len(texto) > LIMITE_TEXTO, "formato": formato, "imagens": 0,
     }
     if aviso:
         resposta["aviso"] = aviso
-    if relatorio:
-        resposta["arquivo"] = _guardar(caminho, relatorio, doi)
-        _registrar(relatorio, doi, "baixado", fonte, resposta["arquivo"])
+    if ex.get("aviso"):
+        resposta["aviso_extracao"] = str(ex["aviso"])
+    if arquivo:
+        resposta["arquivo"] = arquivo
+        md = base.parent / f"{base.name}.md"
+        md.unlink(missing_ok=True)  # um .md antigo mentiria sobre o texto atual
+        if formato == "markdown":
+            md.write_text(texto, encoding="utf-8")
+            resposta["arquivo_md"] = md.name
+        if ex.get("imagens") and imagens and imagens.is_dir():
+            resposta["imagens"] = int(ex["imagens"])
+            resposta["pasta_imagens"] = imagens.name
+        _registrar(relatorio, doi, "baixado", fonte, arquivo)
     return resposta
 
 

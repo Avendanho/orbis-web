@@ -20,7 +20,8 @@ def cliente(tmp_path, monkeypatch):
 
 
 def test_baixar_ok(cliente, tmp_path, monkeypatch):
-    monkeypatch.setattr(main.motor_baixar, "extrair_texto", lambda dados: ("texto", 1))
+    monkeypatch.setattr(main.motor_baixar.extracao, "extrair_conforme_opcoes",
+                        lambda caminho, pasta: {"texto": "texto", "formato": "texto", "paginas": 1, "imagens": 0})
     r = cliente.post("/baixar", json={"doi": "10.1/a", "projeto": "p1", "modo": "baixar", "titulo": "T"})
     assert r.status_code == 200, r.text
     assert r.json()["arquivo"] == "Silva_2021_T.pdf"

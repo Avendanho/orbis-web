@@ -12,7 +12,7 @@ assert.notEqual(k1,await md.textKey('p2','10.1/abc'));
 const okRes={ok:true,fonte:'pmc',fontes_tentadas:['pmc'],arquivo:'X.pdf',identidade:{ok:true,metodo:'doi_in_pdf',score:1,detalhe:'identidade confirmada'},texto:'abc',paginas:2,chars:3,texto_truncado:false};
 let s=md.motorSummary(okRes,'analisar',{key:'k',bytes:3});
 assert.equal(s.ok,true);assert.equal(s.arquivo,undefined,'modo analisar não guarda nome de arquivo');
-assert.deepEqual(s.texto,{key:'k',bytes:3,chars:3,paginas:2,truncado:false});
+assert.deepEqual(s.texto,{key:'k',bytes:3,chars:3,paginas:2,truncado:false,formato:'texto'});
 s=md.motorSummary(okRes,'baixar',null);
 assert.equal(s.arquivo,'X.pdf');assert.equal(s.texto,null);
 s=md.motorSummary({ok:false,erro:'e'.repeat(5000),fontes_tentadas:['a']},'baixar',null);
@@ -23,7 +23,7 @@ const art=md.motorArticle('10.1/a',meta,'id1','artigo_1_10.1_a.pdf','2026-01-01T
 assert.equal(art.id,'id1');assert.equal(art.filename,'artigo_1_10.1_a.pdf');assert.equal(art.title,'T');
 assert.equal(art.source.kind,'motor');assert.equal(art.source.modo,'baixar');assert.equal(art.source.arquivoLocal,'X.pdf');
 assert.equal(art.identity.ok,true);assert.equal(art.identity.method,'conteudo_pdf:doi_in_pdf');
-assert.deepEqual(art.texto,{key:'k',bytes:3,chars:3,paginas:2,truncado:false,origem:'motor'});
+assert.deepEqual(art.texto,{key:'k',bytes:3,chars:3,paginas:2,truncado:false,formato:'texto',origem:'motor'});
 
 assert.match(md.motorNote(art),/pasta local: X\.pdf/);
 assert.match(md.motorNote({...art,source:{kind:'motor',modo:'analisar'}}),/lido e descartado; texto disponível/);
@@ -38,4 +38,18 @@ assert.deepEqual(pulo,{ok:false,modo:'analisar',erro:'O DOI aponta para dados.',
 assert.equal(md.motorSkip({found:true,recordKind:'dataset'},'baixar').erro.includes('conjunto de dados'),true);
 assert.equal(md.motorSkip({found:true,recordKind:'abstract'},'baixar'),null,'resumo de congresso pode ter PDF (suplemento)');
 assert.equal(md.motorSkip({found:true},'baixar'),null);
+// Parte B: o texto chega em Markdown; o formato vai ao artigo e à rota /texto.
+const mdRes={...okRes,texto:'# T',formato:'markdown',imagens:3,pasta_imagens:'X_imagens',arquivo_md:'X.md',aviso_extracao:'x'};
+s=md.motorSummary(mdRes,'baixar',{key:'k',bytes:3});
+assert.equal(s.texto.formato,'markdown');assert.equal(s.arquivoMd,'X.md');assert.equal(s.pastaImagens,'X_imagens');assert.equal(s.imagens,3);assert.equal(s.avisoExtracao,'x');
+s=md.motorSummary(mdRes,'analisar',{key:'k',bytes:3});
+assert.equal(s.arquivoMd,undefined,'modo analisar não guarda .md');assert.equal(s.pastaImagens,undefined);assert.equal(s.texto.formato,'markdown');
+assert.equal(md.motorSummary(okRes,'analisar',{key:'k',bytes:3}).texto.formato,'texto','motor antigo, sem formato = texto');
+const artMd=md.motorArticle('10.1/a',{...meta,motor:md.motorSummary(mdRes,'baixar',{key:'k',bytes:3})},'id2','a.pdf','2026-01-01T00:00:00Z');
+assert.equal(artMd.texto.formato,'markdown');assert.equal(artMd.source.arquivoMd,'X.md');assert.equal(artMd.source.pastaImagens,'X_imagens');assert.equal(artMd.source.imagens,3);
+assert.match(md.motorNote(artMd),/Markdown em X\.md; 3 imagem\(ns\) em X_imagens\//);
+assert.equal(md.textoTipo(artMd),'text/markdown; charset=utf-8');
+assert.equal(md.textoTipo(art),'text/plain; charset=utf-8','texto antigo continua text/plain');
+assert.equal(md.textoTipo({texto:{key:'k',formato:'<script>'}}),'text/plain; charset=utf-8');
+assert.equal(md.textoExt(artMd),'md');assert.equal(md.textoExt(art),'txt');
 console.log('motor-download: ok');

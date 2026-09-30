@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {identity,owned,database,bucket,body,ok,fail,ApiError,requireRole} from '@/lib/server';
 import {engineStatus,downloadViaEngine,EngineRefused} from '@/lib/python-bridge';
-import {isMode,textKey,motorSummary,motorSkip} from '@/lib/motor-download';
+import {isMode,textKey,motorSummary,motorSkip,textoTipo} from '@/lib/motor-download';
 import {exigirInclusao} from '@/lib/screening-db';
 const QUOTA=2*1024*1024*1024;
 // A interface pergunta isto para decidir se oferece os dois modos.
@@ -33,7 +33,7 @@ export async function POST(r:Request,{params}:any){try{
   const bytes=new TextEncoder().encode(res.texto),key=await textKey(id,doi),previous=meta.motor?.texto?.key===key?Number(meta.motor.texto.bytes||0):0,delta=bytes.length-previous;
   const quota=await db.prepare('UPDATE projects SET bytes=MAX(0,bytes+?) WHERE id=? AND archived=0 AND bytes+?<=?').bind(delta,id,delta,QUOTA).run();
   if(!quota.meta.changes)throw new ApiError(413,'O projeto atingiu o limite de 2 GB.');
-  try{await bucket().put(key,bytes,{httpMetadata:{contentType:'text/plain; charset=utf-8'}})}
+  try{await bucket().put(key,bytes,{httpMetadata:{contentType:textoTipo({texto:{formato:res.formato}})}})}
   catch(e){await db.prepare('UPDATE projects SET bytes=MAX(0,bytes-?) WHERE id=?').bind(delta,id).run().catch(()=>{});throw e}
   texto={key,bytes:bytes.length};
  }
