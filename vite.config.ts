@@ -17,10 +17,13 @@ const localBindingConfig = {
   main: "vinext/server/fetch-handler",
   compatibility_flags: ["nodejs_compat"],
   // O start.py define ORBIS_ENGINE_URL quando sobe o motor; o Worker só
-  // enxerga o que for declarado aqui.
-  vars: (process.env.ORBIS_ENGINE_URL
-    ? { ORBIS_ENGINE_URL: process.env.ORBIS_ENGINE_URL }
-    : {}) as Record<string, string>,
+  // enxerga o que for declarado aqui. O token (criado uma vez pelo start.py)
+  // autoriza o ORBIS a gravar as configurações do motor.
+  vars: Object.fromEntries(
+    ["ORBIS_ENGINE_URL", "ORBIS_ENGINE_TOKEN"]
+      .filter((k) => process.env[k])
+      .map((k) => [k, process.env[k]]),
+  ) as Record<string, string>,
   d1_databases: d1
     ? [
         {

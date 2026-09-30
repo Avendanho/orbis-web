@@ -29,7 +29,10 @@ async function source(name:string,url:string):Promise<SourceResult>{
 }
 // Chave do Semantic Scholar: cota própria em vez da cota anônima compartilhada.
 export function s2ApiKey(){return String((globalThis as any).SEMANTIC_SCHOLAR_API_KEY||(typeof process!=='undefined'?process.env?.SEMANTIC_SCHOLAR_API_KEY:'')||'').trim()||undefined;}
-export async function resolveArticle(input:string,refresh=false):Promise<Article>{
+// `opts` vem de Configurações (e-mail do Unpaywall, chave do Semantic Scholar);
+// sem ele, vale o ambiente.
+export type ResolveOpts={unpaywallEmail?:string;s2ApiKey?:string};
+export async function resolveArticle(input:string,refresh=false,opts:ResolveOpts={}):Promise<Article>{
  const doi=normalizeDoi(input);const key=doi.toLowerCase();const cached=cache.get(key);if(!refresh&&cached&&cached.expires>Date.now())return cached.article;
  // Número de registro do CENTRAL não existe no doi.org: consultar só gera 404.
  if(isCentralRecord(doi))return {doi,title:doi,authors:'',year:'',journal:'',pdf:null,pdfUrls:[],source:'',found:false,partial:false,sourceIssues:[],recordKind:'central',...CENTRAL_REASON};
@@ -37,12 +40,12 @@ export async function resolveArticle(input:string,refresh=false):Promise<Article
  const results=await Promise.all([
   source('Crossref','https://api.crossref.org/works/'+encodeURIComponent(doi)),
   source('Europe PMC','https://www.ebi.ac.uk/europepmc/webservices/rest/search?'+query),
-  fetchS2Paper(doi,{apiKey:s2ApiKey()}).then(r=>({name:'Semantic Scholar',...r}) as SourceResult),
+  fetchS2Paper(doi,{apiKey:opts.s2ApiKey||s2ApiKey()}).then(r=>({name:'Semantic Scholar',...r}) as SourceResult),
   source('OpenAlex','https://api.openalex.org/works/https://doi.org/'+encodeURIComponent(doi))
  ]);
  // Unpaywall é a fonte de maior rendimento medido e não estava sendo consultada.
  // Exige e-mail de contato; sem ele, `unpaywall()` se omite sozinha.
- const up=await unpaywall(doi,(globalThis as any).UNPAYWALL_EMAIL||process.env?.UNPAYWALL_EMAIL||'');
+ const up=await unpaywall(doi,opts.unpaywallEmail||(globalThis as any).UNPAYWALL_EMAIL||process.env?.UNPAYWALL_EMAIL||'');
  let cr=results[0].data?.message as Row|undefined,dataciteAbstract='';
  // DataCite covers DOIs such as preprints that are absent from Crossref.
  let dcType='';

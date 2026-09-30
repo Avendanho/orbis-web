@@ -4,9 +4,9 @@ import {resolveArticle} from '@/lib/article-resolver';
 import {extractPdfDetails} from '@/lib/pdf-abstract';
 import {importAI,removeAI,stageName,analysesFor,isCurrent} from '@/lib/ai-analysis';
 import {runAITriage,tamanhoLote} from '@/lib/ai-runner';
-import {iaValores} from '@/lib/ai-env';
+import {settingsValues} from '@/lib/settings-store';
 import {isMode,textKey,orphanTexts,ownKey} from '@/lib/motor-download';
-import {pickProvider} from '@/lib/ai-provider';
+import {pickProvider,motivoSemProvedor} from '@/lib/ai-provider';
 import {restoredState} from '@/lib/validation';
 import {identity,profile,owned,database,bucket,body,ok,fail,commit,ApiError,requireRole} from '@/lib/server';
 import {finalPcc,validateOpinion} from '@/lib/review';
@@ -43,8 +43,8 @@ if(b.action==='renameProject'){
  // decisão humana é criada nem sobrescrita aqui (regra 2 do projeto).
  requireRole(p,['owner','editor']);
  const stage=stageName(b.stage)||'triagem';
- const v=iaValores(),provider=await pickProvider(v);
- if(!provider)throw new ApiError(400,'Nenhum provedor de IA disponível: o Ollama local não respondeu e não há chave de nuvem configurada. Use a importação manual.');
+ const v=await settingsValues(),provider=await pickProvider(v);
+ if(!provider)throw new ApiError(400,motivoSemProvedor(v));
  // Um lote por requisição: a tela repete enquanto houver pendentes (`remaining`).
  let saida;try{saida=await runAITriage({...p,state:s},stage,provider,{batchSize:Number(b.batchSize)||undefined,limit:tamanhoLote(b.limit,v.ORBIS_IA_LOTE),readText:async(key:string)=>{if(!ownKey(id,key))return null;const o=await bucket().get(key);return o?await o.text():null}})}catch(e:any){throw new ApiError(502,e.message)}
  const resumo={provider:provider.name,model:provider.model,analysed:saida.analysed,failures:saida.failures,remaining:saida.remaining};

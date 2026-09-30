@@ -164,6 +164,14 @@ function gemini(key:string,model:string):Provider{return {
   return String(d?.candidates?.[0]?.content?.parts?.[0]?.text||'');
  }};}
 
+// Por que não há provedor: quem escolheu um provedor fixo precisa saber que é
+// a chave dele que falta, não que "nada está configurado".
+export function motivoSemProvedor(v:Record<string,any>):string{
+ const p=String(v.ORBIS_IA_PROVEDOR||'').trim().toLowerCase();
+ if(p&&p!=='automatico'&&p!=='auto'&&p!=='local')return 'O provedor escolhido em Configurações ('+p+') não tem chave cadastrada. Cadastre a chave ou escolha outro provedor.';
+ return 'Nenhum provedor de IA disponível: o Ollama local não respondeu e não há chave de nuvem configurada. Configure em Configurações ou use a importação manual.';
+}
+
 // Automático: o modelo local, se o Ollama responde; se não, a primeira chave de
 // nuvem na ordem de sempre. Com preferência, só aquele provedor — escolher
 // Anthropic e ser atendido pela OpenAI sem saber mudaria quem avaliou os artigos.

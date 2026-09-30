@@ -89,3 +89,33 @@ export async function downloadViaEngine(env:any,req:DownloadRequest):Promise<Eng
  }
  return await r.json() as EngineDownload;
 }
+
+// --- configurações do motor -------------------------------------------------
+// Única rota do motor que exige token: ela grava no motor/.env. O token vem do
+// start.py (ORBIS_ENGINE_TOKEN) e só trafega entre servidores.
+export type EngineConfig={itens:Record<string,{preenchido:boolean;valor:string}>};
+
+async function callConfig(env:any,method:'GET'|'PUT',body?:unknown){
+ const url=engineUrl(env);
+ if(!url)throw new Error('O motor não está configurado neste ORBIS.');
+ let r:Response;
+ try{
+  r=await fetch(url+'/config',{method,
+   headers:{Accept:'application/json','x-orbis-token':String(env?.ORBIS_ENGINE_TOKEN||''),...(body?{'content-type':'application/json'}:{})},
+   body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(8000)});
+ }catch{throw new Error('O motor não está no ar.');}
+ const d:any=await r.json().catch(()=>({}));
+ if(!r.ok)throw new Error(String(d?.detail||'O motor recusou (HTTP '+r.status+').'));
+ return d;
+}
+
+// Leitura: fora do ar ou recusando, a tela mostra o bloco do motor desabilitado.
+export async function engineConfig(env:any):Promise<EngineConfig|null>{
+ try{const d=await callConfig(env,'GET');return {itens:d?.itens||{}};}catch{return null;}
+}
+
+// Escrita: o erro sobe, porque a tela precisa dizer o que ficou pendente.
+export async function saveEngineConfig(env:any,mudancas:Record<string,string|null>):Promise<{salvas:string[];reiniciar:string[]}>{
+ const d=await callConfig(env,'PUT',{mudancas});
+ return {salvas:d?.salvas||[],reiniciar:d?.reiniciar||[]};
+}

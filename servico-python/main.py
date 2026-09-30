@@ -25,16 +25,18 @@ Não guarda credencial nem estado: recebe o que precisa em cada requisição.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import sys
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import baixar as motor_baixar
+import config_env
 
 # O pipeline Python já existente entra pelo caminho que o operador apontar.
 # O motor vive em `motor/src/download`, ao lado deste serviço. `ORBIS_PIPELINE`
@@ -76,7 +78,28 @@ carregar_env_do_motor(Path(__file__).resolve().parent.parent / "motor")
 
 # Onde o modo "baixar" grava os PDFs. `ORBIS_DATA_DIR` é o mesmo diretório de
 # dados que o motor já usa (padrão: a pasta `motor/`).
-PASTA_PDFS = Path(os.environ.get("ORBIS_DATA_DIR") or Path(__file__).resolve().parent.parent / "motor") / "pdfs"
+DADOS = Path(os.environ.get("ORBIS_DATA_DIR") or Path(__file__).resolve().parent.parent / "motor")
+PASTA_PDFS = DADOS / "pdfs"
+
+
+def ler_token(pasta: Path | None = None) -> str:
+    """O segredo que o start.py cria uma vez em `<dados>/data/orbis-token`.
+
+    Vem pela variável quando o start.py sobe o motor; lido do arquivo quando o
+    motor é iniciado à mão, para a tela de Configurações continuar funcionando.
+    """
+    v = os.environ.get("ORBIS_ENGINE_TOKEN", "").strip()
+    if v:
+        return v
+    try:
+        return (Path(pasta or DADOS) / "data" / "orbis-token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+# Sem ele, qualquer página aberta no navegador poderia gravar no motor local (o
+# CORS aceita qualquer origem) — por exemplo, desligar fontes ou trocar chaves.
+TOKEN = ler_token()
 
 # O fetch abre muitas conexões por artigo; mais que 4 em paralelo só gera
 # bloqueio (HTTP 429) nas fontes.
@@ -88,7 +111,7 @@ app = FastAPI(title="ORBIS — motor de recuperação", version="1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.environ.get("ORBIS_ORIGINS", "*").split(",")],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
 
@@ -143,6 +166,33 @@ def saude():
         recursos.append("download_completo")
     return {"ok": True, "pipeline": PIPELINE or None, "recursos": recursos, "faltando": faltando,
             "pasta_pdfs": str(PASTA_PDFS.resolve())}
+
+
+def _autorizar(token: str | None) -> None:
+    if not TOKEN:
+        raise HTTPException(403, "O motor não tem o token do ORBIS (data/orbis-token). Suba o ORBIS pelo start.py para editar as configurações.")
+    if not hmac.compare_digest(token or "", TOKEN):
+        raise HTTPException(403, "Token do ORBIS ausente ou inválido.")
+
+
+@app.get("/config")
+def config_ler(x_orbis_token: str | None = Header(default=None)):
+    _autorizar(x_orbis_token)
+    return {"itens": config_env.visao()}
+
+
+class PedidoConfig(BaseModel):
+    mudancas: dict[str, str | None]
+
+
+@app.put("/config")
+def config_gravar(p: PedidoConfig, x_orbis_token: str | None = Header(default=None)):
+    _autorizar(x_orbis_token)
+    try:
+        reiniciar = config_env.gravar(p.mudancas)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"salvas": sorted(p.mudancas), "reiniciar": reiniciar, "itens": config_env.visao()}
 
 
 class PedidoResolver(BaseModel):

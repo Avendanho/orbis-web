@@ -1,5 +1,6 @@
 import {database,bucket,commit,ApiError} from './server';
 import {resolveArticle} from './article-resolver';
+import {resolveOpts} from './settings-store';
 import {retrievePdf} from './pdf-transfer';
 import {checkIdentity} from './identity';
 import {motorArticle} from './motor-download';
@@ -18,7 +19,7 @@ export async function incorporateWithPdf(p:any,actor:string,state:any,doi:string
  if(metadata.motor?.ok)return incorporateFromMotor(p,actor,state,doi,metadata,triagem);if(!Array.isArray(metadata.pdfUrls)||!metadata.pdfUrls.length)throw new ApiError(422,'PDF gratuito não localizado. O artigo permanece fora do corpus.');
  let reserved=0,docId='',key='',committed=false;
  try{
-  const resolved=await resolveArticle(doi,true),urls=[...new Set([...(resolved.pdfUrls||[]),...(metadata.pdfUrls||[])])].slice(0,12);
+  const resolved=await resolveArticle(doi,true,await resolveOpts()),urls=[...new Set([...(resolved.pdfUrls||[]),...(metadata.pdfUrls||[])])].slice(0,12);
   if(!urls.length)throw new ApiError(422,'PDF gratuito não localizado. O artigo permanece pendente, fora do corpus.');
   let bytes:Uint8Array|undefined;const reasons:string[]=[],start=Date.now();
   for(const url of urls){const remaining=55000-(Date.now()-start);if(remaining<=0){reasons.push('Tempo limite da tentativa excedido.');break}try{bytes=await retrievePdf(url,AbortSignal.timeout(Math.min(14000,remaining)));break}catch(e:any){reasons.push((()=>{try{return new URL(url).hostname}catch{return 'Fonte'}})()+': '+e.message)}}

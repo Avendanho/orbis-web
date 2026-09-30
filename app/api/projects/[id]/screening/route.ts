@@ -1,8 +1,8 @@
 import {identity,owned,database,body,ok,fail,ApiError,requireRole} from '@/lib/server';
 import {resolveArticle} from '@/lib/article-resolver';
-import {pickProvider,callWithRetry,LlmCallFailed} from '@/lib/ai-provider';
+import {pickProvider,motivoSemProvedor,callWithRetry,LlmCallFailed} from '@/lib/ai-provider';
 import {SYSTEM_PROMPT,buildUserPrompt,chunk,tamanhoLote} from '@/lib/ai-runner';
-import {iaValores} from '@/lib/ai-env';
+import {settingsValues,resolveOpts} from '@/lib/settings-store';
 import {parseAI,normalizeAIResponse} from '@/lib/ai-analysis';
 import {registroDe,situacao,decidir,pacoteIA,sugestaoDe,sugestaoAtual,aceitar,type Registro} from '@/lib/screening';
 import {linhasDoProjeto,linhaDe,gravarDecisao,gravarSugestao} from '@/lib/screening-db';
@@ -52,8 +52,8 @@ export async function POST(r:Request,{params}:any){try{
  if(b.action==='ai'){
   requireRole(p,['owner','editor']);
   if(!protocolo.approved)throw new ApiError(400,'Aprove o protocolo antes da triagem.');
-  const v=iaValores(),provider=await pickProvider(v);
-  if(!provider)throw new ApiError(400,'Nenhum provedor de IA disponível: o Ollama local não respondeu e não há chave de nuvem configurada. Configure um em Configurações ou use a triagem manual.');
+  const v=await settingsValues(),provider=await pickProvider(v);
+  if(!provider)throw new ApiError(400,motivoSemProvedor(v));
   const limite=tamanhoLote(b.limit,v.ORBIS_IA_LOTE);
   const linhas=new Map((await linhasDoProjeto(db,id)).map(l=>[l.doi,l]));
   const rows=(await db.prepare("SELECT doi,status,result FROM search_items WHERE project=? AND status IN ('done','partial') ORDER BY updated").bind(id).all()).results||[];
@@ -87,7 +87,7 @@ export async function POST(r:Request,{params}:any){try{
   requireRole(p,['owner','editor']);
   await registro(db,id,doi);
   const row=lerLinha(await db.prepare('SELECT doi,status,result FROM search_items WHERE project=? AND doi=?').bind(id,doi).first());
-  const found=await resolveArticle(doi,true),result={...row.result};
+  const found=await resolveArticle(doi,true,await resolveOpts()),result={...row.result};
   for(const k of ['title','authors','year','journal'] as const)if(!String(result[k]||'').trim()&&(found as any)[k])result[k]=(found as any)[k];
   if(String(found.abstract||'').trim().length>String(result.abstract||'').trim().length){result.abstract=found.abstract;result.abstractSource=found.abstractSource||'';}
   await db.prepare('UPDATE search_items SET result=?,updated=? WHERE project=? AND doi=?').bind(JSON.stringify(result),new Date().toISOString(),id,doi).run();

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shlex
 import shutil
 import signal
@@ -39,6 +40,8 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent
 MOTOR = RAIZ / "motor"
 SERVICO = RAIZ / "servico-python"
+# Mesmo diretório de dados que o motor usa (servico-python/main.py).
+DADOS = Path(os.environ.get("ORBIS_DATA_DIR") or MOTOR)
 PORTA_MOTOR = 8900
 PORTA_ORBIS = 5173
 NODE_MINIMO = (22, 13)
@@ -320,6 +323,30 @@ def _como_liberar_porta(porta: int) -> str:
     return f"lsof -ti :{porta} | xargs -r kill"
 
 
+def token_do_motor(pasta: Path | None = None) -> str:
+    """Segredo que o ORBIS envia ao motor para gravar configurações.
+
+    Criado uma vez e reaproveitado: um motor que ficou no ar de uma execução
+    anterior continua aceitando o ORBIS novo. Fica na pasta de dados (fora do
+    repositório e do pacote .zip), legível só pelo dono.
+    """
+    arq = Path(pasta or DADOS) / "data" / "orbis-token"
+    try:
+        atual = arq.read_text(encoding="utf-8").strip()
+    except OSError:
+        atual = ""
+    if atual:
+        return atual
+    arq.parent.mkdir(parents=True, exist_ok=True)
+    novo = secrets.token_urlsafe(32)
+    arq.write_text(novo + "\n", encoding="utf-8")
+    try:
+        arq.chmod(0o600)
+    except OSError:
+        pass
+    return novo
+
+
 def subir_motor(python: Path) -> bool:
     titulo(f"Subindo o motor em http://127.0.0.1:{PORTA_MOTOR}")
     saude = f"http://127.0.0.1:{PORTA_MOTOR}/saude"
@@ -333,7 +360,7 @@ def subir_motor(python: Path) -> bool:
         erro(f"a porta {PORTA_MOTOR} está ocupada por outro programa; o ORBIS segue sem o motor")
         aviso(f"para liberá-la: {_como_liberar_porta(PORTA_MOTOR)}")
         return False
-    ambiente = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1"}
+    ambiente = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", "ORBIS_ENGINE_TOKEN": token_do_motor()}
     p = _popen(
         [str(python), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(PORTA_MOTOR), "--log-level", "warning"],
         cwd=SERVICO, env=ambiente,
@@ -352,6 +379,7 @@ def subir_orbis(com_motor: bool) -> None:
     ambiente = {**os.environ}
     if com_motor:
         ambiente["ORBIS_ENGINE_URL"] = f"http://127.0.0.1:{PORTA_MOTOR}"
+        ambiente["ORBIS_ENGINE_TOKEN"] = token_do_motor()
     _popen(_pnpm(["dev"]), cwd=RAIZ, env=ambiente)
 
     def abrir():

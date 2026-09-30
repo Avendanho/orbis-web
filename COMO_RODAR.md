@@ -232,6 +232,15 @@ Nada disso entra no controle de versão.
 
 ## Variáveis de ambiente
 
+> A forma recomendada agora é a tela **Configurações** (barra lateral). Ela
+> grava as chaves do ORBIS no banco local e as do motor em `motor/.env`, e
+> mostra de onde vem cada valor. As variáveis abaixo continuam valendo como
+> padrão: o que for salvo na tela tem prioridade.
+>
+> O `start.py` cria uma vez o token `motor/data/orbis-token` (ou
+> `$ORBIS_DATA_DIR/data/orbis-token`) e o entrega ao ORBIS e ao motor como
+> `ORBIS_ENGINE_TOKEN`. É ele que autoriza a tela a gravar no `motor/.env`.
+
 Todas opcionais. Sem elas o sistema funciona, só com menos recursos.
 
 | Variável | Para quê | Sem ela |
@@ -254,24 +263,24 @@ As chaves do motor vão em `motor/.env`. As do ORBIS, no ambiente do Worker.
 ## Testes
 
 ```bash
-# ORBIS — 17 suítes
+# ORBIS — 21 suítes
 for t in tests/*.mjs; do node "$t"; done
 
 # verificação de tipos
 pnpm exec tsc --noEmit
 
-# motor — 336 testes (e 42 no servico-python)
+# motor — 336 testes (e 67 no servico-python)
 cd motor && .venv/bin/python -m pytest -q
 ```
 
 Os testes do ORBIS rodam **sem `pnpm install`**: carregam o TypeScript direto.
-A exceção é `worker-integration.mjs`, que precisa do build (`pnpm build`) e
-leva alguns minutos.
+As exceções são as `*-integration.mjs`, que precisam do build (`pnpm build`)
+e levam alguns minutos.
 
 Antes de publicar, conforme a regra 8 do projeto:
 
 ```bash
-pnpm exec tsc --noEmit && pnpm build && node tests/worker-integration.mjs
+pnpm exec tsc --noEmit && pnpm build && for t in tests/*-integration.mjs; do node "$t" || break; done
 ```
 
 ---

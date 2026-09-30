@@ -9,3 +9,6 @@ export const projectMembers=sqliteTable('project_members',{project:text('project
 // Triagem de títulos e resumos antes do download: uma linha por registro do
 // lote, fora do estado do projeto (centenas de resumos estourariam 1,8 MB).
 export const screening=sqliteTable('screening',{project:text('project').notNull().references(()=>projects.id),doi:text('doi').notNull(),decision:text('decision'),answers:text('answers'),reasons:text('reasons'),reason:text('reason'),actor:text('actor'),version:integer('version'),source:text('source'),ai:text('ai'),updated:text('updated').notNull()},t=>[primaryKey({columns:[t.project,t.doi]})]);
+// Configurações da instalação (tela Configurações). Chave = nome da variável de
+// ambiente que o valor substitui; ver lib/settings.ts.
+export const settings=sqliteTable('settings',{key:text('key').primaryKey(),value:text('value').notNull(),updated:text('updated').notNull()});
