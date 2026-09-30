@@ -12,7 +12,7 @@ export type Registro={doi:string;title:string;authors:string;year:string;journal
 export type Sugestao={provider:string;model:string;version:number;criteriaHash:string;sourceHash:string;decision:'incluir'|'excluir';questions:AIRow[];at:string};
 export type LinhaTriagem={doi:string;decision:string|null;answers:string[];reasons:string[];reason:string;actor:string;version:number|null;source:string;ai:Sugestao|null};
 export type Decisao={decision:'incluir'|'excluir';answers:string[];reasons:string[];reason:string;actor:string;version:number;source:string;provider?:string;model?:string};
-export type Filtro='todos'|'pendente'|'incluir'|'excluir'|'sem_resumo';
+export type Filtro='todos'|'pendente'|'incluir'|'excluir'|'sem_resumo'|'nao_obtido';
 type Situacao='pendente'|'incluir'|'excluir';
 export const POR_PAGINA=50;
 const texto=(x:any)=>typeof x==='string'?x:x==null?'':String(x);
@@ -33,17 +33,28 @@ export function situacao(l:LinhaTriagem|null|undefined,versao:number):Situacao{
  return l&&l.version===versao&&(l.decision==='incluir'||l.decision==='excluir')?l.decision:'pendente';
 }
 
-export function listar(searches:any[],linhas:LinhaTriagem[],protocolo:any,{filtro='pendente',busca='',pagina=1}:{filtro?:Filtro;busca?:string;pagina?:number}={}){
+// Depois de incluído: já no corpus, aguardando o download ou tentado sem
+// sucesso — com o motivo que o motor ou o Worker registraram na linha do lote.
+export type Obtencao={estado:'no_corpus'|'aguardando'|'nao_obtido';motivo:string};
+export function obtencao(row:any,articles:any[]):Obtencao{
+ const doi=semCaixa(row?.doi);
+ if(articles.some(a=>semCaixa(a?.doi)===doi))return {estado:'no_corpus',motivo:''};
+ const motivo=texto(row?.error).trim()||(row?.result?.motor?.ok===false?texto(row.result.motor.erro).trim():'');
+ return motivo?{estado:'nao_obtido',motivo}:{estado:'aguardando',motivo:''};
+}
+
+export function listar(searches:any[],linhas:LinhaTriagem[],protocolo:any,{filtro='pendente',busca='',pagina=1,articles=[]}:{filtro?:Filtro;busca?:string;pagina?:number;articles?:any[]}={}){
  const porDoi=new Map(linhas.map(l=>[l.doi,l]));
- const todos=(searches.map(registroDe).filter(Boolean) as Registro[]).map(registro=>{
-  const linha=porDoi.get(registro.doi)||null;
-  return {registro,linha,situacao:situacao(linha,protocolo.version),antiga:!!linha?.decision&&linha.version!==protocolo.version,
-   sugestao:linha?.ai&&sugestaoAtual(linha.ai,registro,protocolo)?linha.ai:null};
+ const todos=searches.map(row=>({row,registro:registroDe(row)})).filter(x=>x.registro).map(({row,registro})=>{
+  const linha=porDoi.get(registro!.doi)||null,s=situacao(linha,protocolo.version);
+  return {registro:registro!,linha,situacao:s,antiga:!!linha?.decision&&linha.version!==protocolo.version,
+   sugestao:linha?.ai&&sugestaoAtual(linha.ai,registro!,protocolo)?linha.ai:null,
+   obtencao:s==='incluir'?obtencao(row,articles):null};
  });
- const contagens={todos:todos.length,pendente:0,incluir:0,excluir:0,sem_resumo:0};
- for(const x of todos){contagens[x.situacao]++;if(!x.registro.abstract.trim())contagens.sem_resumo++;}
+ const contagens={todos:todos.length,pendente:0,incluir:0,excluir:0,sem_resumo:0,nao_obtido:0};
+ for(const x of todos){contagens[x.situacao]++;if(!x.registro.abstract.trim())contagens.sem_resumo++;if(x.obtencao?.estado==='nao_obtido')contagens.nao_obtido++;}
  const q=busca.trim().toLocaleLowerCase();
- const filtrados=todos.filter(x=>(filtro==='todos'||(filtro==='sem_resumo'?!x.registro.abstract.trim():x.situacao===filtro))
+ const filtrados=todos.filter(x=>(filtro==='todos'||(filtro==='sem_resumo'?!x.registro.abstract.trim():filtro==='nao_obtido'?x.obtencao?.estado==='nao_obtido':x.situacao===filtro))
   &&(!q||[x.registro.title,x.registro.authors,x.registro.doi,x.registro.journal,x.registro.abstract].join(' ').toLocaleLowerCase().includes(q)));
  const paginas=Math.max(1,Math.ceil(filtrados.length/POR_PAGINA)),atual=Math.min(Math.max(1,Math.floor(pagina)||1),paginas);
  return {itens:filtrados.slice((atual-1)*POR_PAGINA,atual*POR_PAGINA),total:filtrados.length,paginas,pagina:atual,contagens};

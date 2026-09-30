@@ -102,8 +102,9 @@ estão prontos para a triagem.
 
 Cada DOI que trouxe metadados vira um **registro** para triar. A tela mostra:
 
-- filtros com contagem: *pendentes*, *incluídos*, *excluídos*, *sem resumo*,
-  *todos* — e uma busca por título, autor, DOI, periódico ou resumo;
+- filtros com contagem: *pendentes*, *incluídos*, *excluídos*, *PDF não
+  obtido*, *sem resumo*, *todos* — e uma busca por título, autor, DOI,
+  periódico ou resumo;
 - uma lista de 50 registros por página;
 - a **ficha** do registro: título, autores, ano, periódico, o resumo e de onde
   ele veio, e as perguntas do protocolo para responder.
@@ -151,8 +152,9 @@ Sem o motor, o ORBIS tenta sozinho pelas fontes abertas que conhece e guarda o
 PDF no próprio sistema (sem extrair o texto).
 
 O artigo entra no corpus **com a decisão de triagem copiada**. O que não
-baixar fica como *incluído, PDF não obtido*, com o motivo, e o botão pode ser
-usado de novo mais tarde. Em geral só metade de um acervo tem cópia aberta em
+baixar fica como *incluído, PDF não obtido*, com o motivo — na lista e na
+ficha da triagem, e no filtro **PDF não obtido** —, e o botão pode ser usado
+de novo mais tarde. Em geral só metade de um acervo tem cópia aberta em
 algum lugar; o resto depende do acesso institucional (veja
 [COMO_RODAR.md](../COMO_RODAR.md)).
 

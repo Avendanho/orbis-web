@@ -44,7 +44,7 @@ assert.equal(sc.situacao(linhas[1],2),'pendente','decisão de versão anterior c
 assert.equal(sc.situacao(undefined,2),'pendente');
 let l=sc.listar(searches,linhas,protocolo,{filtro:'todos'});
 assert.equal(l.total,3);
-assert.deepEqual(l.contagens,{todos:3,pendente:2,incluir:1,excluir:0,sem_resumo:1});
+assert.deepEqual(l.contagens,{todos:3,pendente:2,incluir:1,excluir:0,sem_resumo:1,nao_obtido:0});
 l=sc.listar(searches,linhas,protocolo,{filtro:'pendente'});
 assert.deepEqual(l.itens.map(x=>x.registro.doi),['10.1/b','10.1/c']);
 assert.equal(l.itens[1].antiga,true,'mostra que há decisão de versão anterior');
@@ -116,4 +116,26 @@ assert.equal(sc.contagensPrisma(searches,linhas,[],2).naoObtidos,1);
 // (e às vezes sem o DOI no lote). O fluxograma aproveita essa triagem.
 assert.deepEqual(sc.contagensPrisma(searches,linhas,[{doi:'10.1/b',triage:{version:2,decision:'excluir'}},{doi:'10.1/z',triage:{version:2,decision:'incluir'}}],2),
  {identificados:4,triados:3,excluidosTriagem:1,incluidosTriagem:2,pendentesTriagem:1,buscados:2,obtidos:1,naoObtidos:1,locais:0});
+// ---------------------------------------------------------------------------
+// Incluído que não baixou: "PDF não obtido", com o motivo — na lista, na ficha
+// e num filtro próprio, para a pessoa não ter de caçar no Artigo Aberto.
+// ---------------------------------------------------------------------------
+{
+ const s2=[{...searches[0],error:'Nenhuma fonte entregou o PDF.'},
+  {doi:'10.1/g',status:'done',result:achou('Gama','g',{motor:{ok:false,erro:'A editora bloqueia o download (HTTP 403).'}})},
+  {doi:'10.1/h',status:'done',result:achou('Eta','h')},
+  {doi:'10.1/i',status:'done',result:achou('Iota','i')}];
+ const ls=['10.1/a','10.1/g','10.1/h','10.1/i'].map(d=>linha(d,'incluir',2));
+ const arts=[{doi:'10.1/I'}];
+ assert.deepEqual(sc.obtencao(s2[0],arts),{estado:'nao_obtido',motivo:'Nenhuma fonte entregou o PDF.'});
+ assert.deepEqual(sc.obtencao(s2[1],arts),{estado:'nao_obtido',motivo:'A editora bloqueia o download (HTTP 403).'});
+ assert.deepEqual(sc.obtencao(s2[2],arts),{estado:'aguardando',motivo:''},'ainda não tentado');
+ assert.deepEqual(sc.obtencao(s2[3],arts),{estado:'no_corpus',motivo:''},'DOI sem diferença de caixa');
+ const r=sc.listar(s2,ls,protocolo,{filtro:'nao_obtido',articles:arts});
+ assert.deepEqual(r.itens.map(x=>x.registro.doi),['10.1/a','10.1/g']);
+ assert.equal(r.contagens.nao_obtido,2);
+ assert.equal(r.itens[1].obtencao.motivo,'A editora bloqueia o download (HTTP 403).');
+ assert.equal(sc.listar(s2,ls,protocolo,{filtro:'todos',articles:arts}).itens.find(x=>x.registro.doi==='10.1/h').obtencao.estado,'aguardando');
+ assert.equal(sc.listar(searches,linhas,protocolo,{filtro:'todos'}).itens.find(x=>x.registro.doi==='10.1/b').obtencao,null,'pendente não tem obtenção');
+}
 console.log('screening: ok');

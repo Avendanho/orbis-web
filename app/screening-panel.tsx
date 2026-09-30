@@ -4,13 +4,14 @@ import {toast} from 'sonner';
 import {Button} from '@/components/ui/button';import {Input} from '@/components/ui/input';import {Badge} from '@/components/ui/badge';
 import {Table,TableHeader,TableBody,TableRow,TableHead,TableCell} from '@/components/ui/table';
 import {TriageForm} from './assessment-workspace';
-import {listar,registroDe,situacao,sugestaoAtual,incluidosParaBaixar,type Filtro} from '@/lib/screening';
+import {listar,registroDe,situacao,sugestaoAtual,incluidosParaBaixar,obtencao,type Filtro} from '@/lib/screening';
 
 // Triagem de títulos e resumos antes do download. Os registros vêm do lote do
 // Artigo Aberto (título e resumo já buscados na web); só os incluídos são
 // baixados e entram no corpus, levando a decisão junto.
 async function api(url:string,data:any){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});const x:any=await r.json();if(!r.ok)throw Object.assign(Error(x.message),{status:r.status});return x}
-const FILTROS:[Filtro,string][]=[['pendente','Pendentes'],['incluir','Incluídos'],['excluir','Excluídos'],['sem_resumo','Sem resumo'],['todos','Todos']];
+const FILTROS:[Filtro,string][]=[['pendente','Pendentes'],['incluir','Incluídos'],['excluir','Excluídos'],['nao_obtido','PDF não obtido'],['sem_resumo','Sem resumo'],['todos','Todos']];
+const OBTENCAO:Record<string,string>={no_corpus:'no corpus',aguardando:'aguardando download',nao_obtido:'PDF não obtido'};
 const ROTULO:Record<string,string>={pendente:'Pendente',incluir:'Incluído',excluir:'Excluído'};
 const RESPOSTA:Record<string,string>={sim:'Sim',nao:'Não',indeterminado:'Indeterminado'};
 
@@ -21,7 +22,7 @@ export default function ScreeningPanel({project,busy,running,refresh,baixarInclu
  const [ia,setIa]=useState(false),[progresso,setProgresso]=useState(''),[ocupado,setOcupado]=useState(false),[dirty,setDirty]=useState(false);
  const parar=useRef(false);
  const linhas=project.screening||[],searches=project.searches||[];
- const lista=listar(searches,linhas,protocolo,{filtro,busca,pagina});
+ const lista=listar(searches,linhas,protocolo,{filtro,busca,pagina,articles:project.state.articles});
  const porDoi=new Map(linhas.map((l:any)=>[l.doi,l]));
  const registros=searches.map(registroDe).filter(Boolean) as any[];
  const comSugestao=registros.filter(r=>{const l:any=porDoi.get(r.doi);return situacao(l,protocolo.version)==='pendente'&&sugestaoAtual(l?.ai,r,protocolo)}).map(r=>r.doi);
@@ -29,7 +30,9 @@ export default function ScreeningPanel({project,busy,running,refresh,baixarInclu
  const bloqueado=busy||running||ocupado||ia;
 
  const sel=(()=>{const reg=registros.find(r=>r.doi===doi);if(!reg)return null;const linha:any=porDoi.get(reg.doi)||null;
-  return {registro:reg,linha,situacao:situacao(linha,protocolo.version),sugestao:linha?.ai&&sugestaoAtual(linha.ai,reg,protocolo)?linha.ai:null}})();
+  const s=situacao(linha,protocolo.version);
+  return {registro:reg,linha,situacao:s,sugestao:linha?.ai&&sugestaoAtual(linha.ai,reg,protocolo)?linha.ai:null,
+   obtencao:s==='incluir'?obtencao(searches.find((r:any)=>r.doi===reg.doi),project.state.articles):null}})();
 
  function abrir(d:string){if(dirty&&d!==doi&&!window.confirm('Há alterações não salvas na ficha atual. Descartar?'))return;setDirty(false);setDoi(d)}
  async function agir(fn:()=>Promise<void>){if(ocupado)return;setOcupado(true);try{await fn()}catch(e:any){toast.error(e.message)}finally{setOcupado(false)}}
@@ -75,7 +78,7 @@ export default function ScreeningPanel({project,busy,running,refresh,baixarInclu
    <Table><TableHeader><TableRow><TableHead>Registro</TableHead><TableHead>Situação</TableHead><TableHead>IA</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader>
     <TableBody>{lista.itens.map(x=><TableRow key={x.registro.doi} className={x.registro.doi===doi?'selected':''}>
      <TableCell><strong>{x.registro.title||x.registro.doi}</strong><p className="muted">{[x.registro.year,x.registro.journal,x.registro.doi].filter(Boolean).join(' · ')}{!x.registro.abstract.trim()&&' · sem resumo'}</p></TableCell>
-     <TableCell><span className={'assessment-status status-'+x.situacao}>{ROTULO[x.situacao]}</span>{x.antiga&&<small className="muted"> decisão de versão anterior</small>}</TableCell>
+     <TableCell><span className={'assessment-status status-'+x.situacao}>{ROTULO[x.situacao]}</span>{x.antiga&&<small className="muted"> decisão de versão anterior</small>}{x.obtencao&&<small className={x.obtencao.estado==='nao_obtido'?'notice':'muted'} title={x.obtencao.motivo||undefined}> {OBTENCAO[x.obtencao.estado]}</small>}</TableCell>
      <TableCell>{x.sugestao?<Badge variant="outline">{x.sugestao.decision==='incluir'?'sugere incluir':'sugere excluir'}</Badge>:'—'}</TableCell>
      <TableCell><Button variant="outline" disabled={busy} onClick={()=>abrir(x.registro.doi)}>{x.situacao==='pendente'?'Triar':'Ver / alterar'}</Button></TableCell>
     </TableRow>)}</TableBody></Table>
@@ -84,6 +87,8 @@ export default function ScreeningPanel({project,busy,running,refresh,baixarInclu
   </section>
   {sel&&<section className="panel">
    <div className="section-top"><div><p className="eyebrow">{ROTULO[sel.situacao]}{sel.linha?.decision&&sel.linha.version!==protocolo.version?' · há decisão de versão anterior do protocolo':''}</p><h2>{sel.registro.title||sel.registro.doi}</h2><p>{[sel.registro.authors,sel.registro.year,sel.registro.journal].filter(Boolean).join(' · ')}</p><a href={'https://doi.org/'+sel.registro.doi} target="_blank" rel="noopener noreferrer">{sel.registro.doi}</a></div><Button variant="outline" onClick={()=>abrir('')}>Fechar</Button></div>
+   {sel.obtencao?.estado==='nao_obtido'&&<p className="notice">PDF não obtido: {sel.obtencao.motivo} <strong>Baixar os incluídos</strong> tenta de novo. Artigos de assinatura dependem do acesso institucional configurado no motor.</p>}
+   {sel.obtencao?.estado==='no_corpus'&&<p className="muted">Já está no corpus, com esta decisão de triagem.</p>}
    <h3>Resumo</h3>
    {sel.registro.abstract.trim()?<><p>{sel.registro.abstract}</p><small className="muted">Fonte: {sel.registro.abstractSource||'—'}</small></>:<p className="notice">Resumo não localizado nas bases consultadas. Decida pelo título ou tente buscar de novo.</p>}
    {podeEditar&&<div className="actions"><Button variant="outline" disabled={bloqueado} onClick={()=>buscarResumo(sel.registro.doi)}>Buscar resumo de novo</Button></div>}
