@@ -89,6 +89,14 @@ const respondeTudo=fake(p=>JSON.stringify({items:p.artigos.map(a=>({
  triagem_nivel1:[{pergunta:1,resposta:'sim',motivo:'P presente'},{pergunta:2,resposta:'sim',motivo:'C presente'}],
 }))}));
 
+// O pedido à IA leva os critérios do protocolo: sem eles, a IA responde às
+// cegas (achado na verificação real: respostas genéricas e iguais).
+{
+ const pkg=ai.makeAIPackage(novoProjeto(),'triagem'),pedido=JSON.parse(runner.buildUserPrompt(pkg,pkg.items));
+ assert.deepEqual(pedido.criterios,pkg.criteria,'os critérios do pacote vão no pedido');
+ for(const q of protocol.questions)assert.ok(JSON.stringify(pedido).includes(q),'pergunta no pedido: '+q);
+}
+
 let projeto=novoProjeto();
 let saida=await runner.runAITriage(projeto,'triagem',respondeTudo,{batchSize:1});
 assert.equal(saida.analysed,2,'os dois artigos foram avaliados');

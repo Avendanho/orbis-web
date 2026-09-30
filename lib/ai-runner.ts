@@ -54,7 +54,8 @@ export async function withFullText(project:any,items:any[],readText:(key:string)
 export function buildUserPrompt(pkg:any,items:any[]):string{
  return JSON.stringify({
   instrucoes:pkg.instrucoes,
-  criterios:pkg.criterios,
+  // O pacote guarda os critérios em `criteria`; sem eles a IA responde às cegas.
+  criterios:pkg.criteria,
   formato_resposta:pkg.formato_resposta,
   artigos:items,
  },null,1);
